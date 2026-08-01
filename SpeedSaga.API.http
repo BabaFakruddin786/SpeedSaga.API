@@ -1,0 +1,36 @@
+@SpeedSaga.API_HostAddress = http://localhost:5281
+
+### Auth
+POST {{SpeedSaga.API_HostAddress}}/api/auth/register
+Content-Type: application/json
+
+{
+  "contactEmail": "player@example.com",
+  "contactPhone": "9876543210",
+  "password": "Password123",
+  "referralCode": null,
+  "stateCode": "MH",
+  "isAgeVerified": true,
+  "isTermsAccepted": true
+}
+
+###
+POST {{SpeedSaga.API_HostAddress}}/api/auth/login
+Content-Type: application/json
+
+{
+  "contact": "player@example.com",
+  "password": "Password123"
+}
+
+### Wallet (requires JWT)
+GET {{SpeedSaga.API_HostAddress}}/api/wallet/balance
+Authorization: Bearer {{token}}
+
+###
+GET {{SpeedSaga.API_HostAddress}}/api/player/dashboard
+Authorization: Bearer {{token}}
+
+###
+GET {{SpeedSaga.API_HostAddress}}/api/game/level?timeMode=1min&rewardMode=3x
+Authorization: Bearer {{token}}
