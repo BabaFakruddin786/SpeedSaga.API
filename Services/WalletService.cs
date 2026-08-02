@@ -10,6 +10,7 @@ public interface IWalletService
     Task<object?> GetWalletAsync(Guid playerId);
     Task<ApiResponse<object>> ProcessDepositAsync(Guid playerId, DepositRequest req);
     Task<ApiResponse<object>> DeductEntryFeeAsync(Guid playerId, Guid sessionId, long feePaise);
+    Task<ApiResponse<object>> WithdrawAsync(Guid playerId, WithdrawRequest req);
     Task<object?> GetTransactionsAsync(Guid playerId, string? type, int page);
     Task<bool> HasSufficientBalanceAsync(Guid playerId, long amountPaise);
 }
@@ -103,6 +104,26 @@ public class WalletService : IWalletService
         var r = (int)pRes.Value!;
         return r == 1
             ? new ApiResponse<object>(true, (string)pMsg.Value!)
+            : new ApiResponse<object>(false, (string)pMsg.Value!);
+    }
+
+    public async Task<ApiResponse<object>> WithdrawAsync(Guid playerId, WithdrawRequest req)
+    {
+        await using var cn = _db.CreateConnection();
+        await cn.OpenAsync();
+        await using var cmd = new SqlCommand("USP_ProcessWithdrawal", cn) { CommandType = CommandType.StoredProcedure };
+        cmd.Parameters.AddWithValue("@PlayerId", playerId);
+        cmd.Parameters.AddWithValue("@AmountPaise", req.AmountPaise);
+
+        var pRes = cmd.Parameters.Add("@Result", SqlDbType.Int);
+        pRes.Direction = ParameterDirection.Output;
+        var pMsg = cmd.Parameters.Add("@Message", SqlDbType.NVarChar, 200);
+        pMsg.Direction = ParameterDirection.Output;
+        await cmd.ExecuteNonQueryAsync();
+
+        var r = (int)pRes.Value!;
+        return r == 1
+            ? new ApiResponse<object>(true, (string)pMsg.Value!, new { AmountRs = req.AmountPaise / 100.0 })
             : new ApiResponse<object>(false, (string)pMsg.Value!);
     }
 

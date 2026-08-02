@@ -60,6 +60,8 @@ Swagger: `https://localhost:7xxx/swagger` (see console output for port)
 |--------|----------|-------------|
 | POST | `/api/auth/register` | Register player |
 | POST | `/api/auth/login` | Login and receive JWT |
+| POST | `/api/auth/forgot-password` | Request reset code |
+| POST | `/api/auth/reset-password` | Reset password with code |
 
 ### Wallet (JWT required)
 | Method | Endpoint | Description |
@@ -67,16 +69,24 @@ Swagger: `https://localhost:7xxx/swagger` (see console output for port)
 | GET | `/api/wallet/balance` | Wallet balance and KYC status |
 | POST | `/api/wallet/create-order` | Create Razorpay deposit order |
 | POST | `/api/wallet/deposit` | Confirm deposit after payment |
+| POST | `/api/wallet/withdraw` | Request withdrawal (KYC required) |
 | GET | `/api/wallet/transactions` | Transaction history |
 
 ### Game (JWT required)
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/api/game/level` | Allocate puzzle level |
+| POST | `/api/game/start-free` | Start free practice session |
 | POST | `/api/game/start-single` | Start single-player paid session |
 | POST | `/api/game/join-match` | Join two-player matchmaking |
 | POST | `/api/game/result` | Submit game result |
 | GET | `/api/game/replay/{sessionId}` | Get replay data |
+
+### Notifications (JWT required)
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/notifications` | List notifications |
+| POST | `/api/notifications/{id}/read` | Mark notification read |
 
 ### Player (JWT required)
 | Method | Endpoint | Description |

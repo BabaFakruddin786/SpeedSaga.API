@@ -115,3 +115,31 @@ public class StartSinglePlayerRequestValidator : AbstractValidator<StartSinglePl
         RuleFor(x => x.EntryFeePaise).GreaterThan(0);
     }
 }
+
+public class StartFreePlayRequestValidator : AbstractValidator<StartFreePlayRequest>
+{
+    public StartFreePlayRequestValidator()
+    {
+        RuleFor(x => x.TimeMode).NotEmpty();
+    }
+}
+
+public class ForgotPasswordRequestValidator : AbstractValidator<ForgotPasswordRequest>
+{
+    public ForgotPasswordRequestValidator() => RuleFor(x => x.Contact).NotEmpty().MaximumLength(150);
+}
+
+public class ResetPasswordRequestValidator : AbstractValidator<ResetPasswordRequest>
+{
+    public ResetPasswordRequestValidator()
+    {
+        RuleFor(x => x.Contact).NotEmpty().MaximumLength(150);
+        RuleFor(x => x.ResetCode).NotEmpty().Length(6);
+        RuleFor(x => x.NewPassword).NotEmpty().MinimumLength(8).MaximumLength(128);
+    }
+}
+
+public class WithdrawRequestValidator : AbstractValidator<WithdrawRequest>
+{
+    public WithdrawRequestValidator() => RuleFor(x => x.AmountPaise).GreaterThanOrEqualTo(10000);
+}

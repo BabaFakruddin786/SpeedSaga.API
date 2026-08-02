@@ -38,6 +38,14 @@ public record StartSinglePlayerRequest(
     string RewardMode,
     long EntryFeePaise);
 
+public record StartFreePlayRequest(string TimeMode);
+
+public record ForgotPasswordRequest(string Contact);
+
+public record ResetPasswordRequest(string Contact, string ResetCode, string NewPassword);
+
+public record WithdrawRequest(long AmountPaise);
+
 public record AllocatedLevelResult(int LevelId, string GridJson);
 
 public record ApiResponse<T>(bool Success, string Message, T? Data = default);

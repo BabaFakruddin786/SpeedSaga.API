@@ -10,6 +10,7 @@ public interface IGameService
     Task<ApiResponse<object>> SubmitResultAsync(Guid playerId, SubmitResultRequest req);
     Task<ApiResponse<object>> JoinMatchAsync(Guid playerId, JoinMatchRequest req);
     Task<ApiResponse<object>> StartSinglePlayerAsync(Guid playerId, StartSinglePlayerRequest req);
+    Task<ApiResponse<object>> StartFreePlayAsync(Guid playerId, StartFreePlayRequest req);
     Task<object?> GetReplayAsync(Guid sessionId, Guid? playerId);
     Task RecalculateWinRates();
     Task CleanupExpiredQueue();
@@ -70,6 +71,35 @@ public class GameService : IGameService
             level.LevelId,
             level.GridJson,
             RewardPaise = rewardPaise,
+            TimeLimitSecs = timeLimitSecs
+        });
+    }
+
+    public async Task<ApiResponse<object>> StartFreePlayAsync(Guid playerId, StartFreePlayRequest req)
+    {
+        var level = await _level.AllocateLevelAsync(playerId, new AllocateLevelRequest(req.TimeMode, "3x"));
+        if (level == null)
+            return new ApiResponse<object>(false, "No level available for the selected mode.");
+
+        var timeLimitSecs = ParseTimeMode(req.TimeMode);
+        var sessionId = Guid.NewGuid();
+
+        await using var cn = _db.CreateConnection();
+        await cn.OpenAsync();
+        await using var insert = new SqlCommand(@"
+            INSERT INTO GameSessions (SessionId, Player1Id, GameMode, EntryFeePaise, RewardPaise, LevelId, TimeLimitSecs, Status, StartedAt)
+            VALUES (@SessionId, @PlayerId, 'FreePlay', 0, 0, @LevelId, @TimeLimit, 'Active', GETDATE())", cn);
+        insert.Parameters.AddWithValue("@SessionId", sessionId);
+        insert.Parameters.AddWithValue("@PlayerId", playerId);
+        insert.Parameters.AddWithValue("@LevelId", level.LevelId);
+        insert.Parameters.AddWithValue("@TimeLimit", timeLimitSecs);
+        await insert.ExecuteNonQueryAsync();
+
+        return new ApiResponse<object>(true, "Free play session started", new
+        {
+            SessionId = sessionId,
+            level.LevelId,
+            level.GridJson,
             TimeLimitSecs = timeLimitSecs
         });
     }

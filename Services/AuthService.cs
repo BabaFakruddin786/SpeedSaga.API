@@ -16,6 +16,8 @@ public interface IAuthService
 {
     Task<ApiResponse<object>> RegisterAsync(RegisterRequest req);
     Task<ApiResponse<object>> LoginAsync(LoginRequest req);
+    Task<ApiResponse<object>> ForgotPasswordAsync(ForgotPasswordRequest req, bool includeDevCode = false);
+    Task<ApiResponse<object>> ResetPasswordAsync(ResetPasswordRequest req);
 }
 
 public class AuthService : IAuthService
@@ -102,6 +104,63 @@ public class AuthService : IAuthService
         var token = GenerateToken(playerId, req.Contact, stateCode);
 
         return new ApiResponse<object>(true, "Login successful", new { PlayerId = playerId, Token = token });
+    }
+
+    public async Task<ApiResponse<object>> ForgotPasswordAsync(ForgotPasswordRequest req, bool includeDevCode = false)
+    {
+        var code = Random.Shared.Next(100000, 999999).ToString();
+        var codeHash = HashValue(code);
+        var expiresAt = DateTime.UtcNow.AddMinutes(15);
+
+        await using var cn = _db.CreateConnection();
+        await cn.OpenAsync();
+        await using var cmd = new SqlCommand("USP_ForgotPassword", cn) { CommandType = CommandType.StoredProcedure };
+        cmd.Parameters.AddWithValue("@Contact", req.Contact);
+        cmd.Parameters.AddWithValue("@CodeHash", codeHash);
+        cmd.Parameters.AddWithValue("@ExpiresAt", expiresAt);
+
+        var pRes = cmd.Parameters.Add("@Result", SqlDbType.Int);
+        pRes.Direction = ParameterDirection.Output;
+        var pMsg = cmd.Parameters.Add("@Message", SqlDbType.NVarChar, 200);
+        pMsg.Direction = ParameterDirection.Output;
+        await cmd.ExecuteNonQueryAsync();
+
+        var msg = (string)pMsg.Value!;
+        object? data = includeDevCode ? new { ResetCode = code, ExpiresInMinutes = 15 } : null;
+        return new ApiResponse<object>(true, msg, data);
+    }
+
+    public async Task<ApiResponse<object>> ResetPasswordAsync(ResetPasswordRequest req)
+    {
+        var salt = GenerateSalt();
+        var hash = HashPassword(req.NewPassword, salt);
+        var codeHash = HashValue(req.ResetCode);
+
+        await using var cn = _db.CreateConnection();
+        await cn.OpenAsync();
+        await using var cmd = new SqlCommand("USP_ResetPassword", cn) { CommandType = CommandType.StoredProcedure };
+        cmd.Parameters.AddWithValue("@Contact", req.Contact);
+        cmd.Parameters.AddWithValue("@CodeHash", codeHash);
+        cmd.Parameters.AddWithValue("@NewPasswordHash", hash);
+        cmd.Parameters.AddWithValue("@NewPasswordSalt", salt);
+
+        var pRes = cmd.Parameters.Add("@Result", SqlDbType.Int);
+        pRes.Direction = ParameterDirection.Output;
+        var pMsg = cmd.Parameters.Add("@Message", SqlDbType.NVarChar, 200);
+        pMsg.Direction = ParameterDirection.Output;
+        await cmd.ExecuteNonQueryAsync();
+
+        var result = (int)pRes.Value!;
+        var msg = (string)pMsg.Value!;
+        return result == 1
+            ? new ApiResponse<object>(true, msg)
+            : new ApiResponse<object>(false, msg);
+    }
+
+    private static string HashValue(string value)
+    {
+        using var sha = SHA256.Create();
+        return Convert.ToBase64String(sha.ComputeHash(Encoding.UTF8.GetBytes(value)));
     }
 
     private string GenerateToken(Guid playerId, string contact, string? stateCode)

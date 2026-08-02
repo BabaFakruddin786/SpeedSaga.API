@@ -10,8 +10,13 @@ namespace SpeedSaga.API.Controllers;
 public class AuthController : ControllerBase
 {
     private readonly IAuthService _auth;
+    private readonly IWebHostEnvironment _env;
 
-    public AuthController(IAuthService auth) => _auth = auth;
+    public AuthController(IAuthService auth, IWebHostEnvironment env)
+    {
+        _auth = auth;
+        _env = env;
+    }
 
     [HttpPost("register")]
     [AllowAnonymous]
@@ -27,5 +32,21 @@ public class AuthController : ControllerBase
     {
         var result = await _auth.LoginAsync(req);
         return result.Success ? Ok(result) : Unauthorized(result);
+    }
+
+    [HttpPost("forgot-password")]
+    [AllowAnonymous]
+    public async Task<IActionResult> ForgotPassword([FromBody] ForgotPasswordRequest req)
+    {
+        var result = await _auth.ForgotPasswordAsync(req, _env.IsDevelopment());
+        return Ok(result);
+    }
+
+    [HttpPost("reset-password")]
+    [AllowAnonymous]
+    public async Task<IActionResult> ResetPassword([FromBody] ResetPasswordRequest req)
+    {
+        var result = await _auth.ResetPasswordAsync(req);
+        return result.Success ? Ok(result) : BadRequest(result);
     }
 }

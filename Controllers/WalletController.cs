@@ -44,4 +44,11 @@ public class WalletController : ControllerBase
     [HttpGet("transactions")]
     public async Task<IActionResult> Transactions([FromQuery] string? type, [FromQuery] int page = 1)
         => Ok(await _wallet.GetTransactionsAsync(User.GetPlayerId(), type, page));
+
+    [HttpPost("withdraw")]
+    public async Task<IActionResult> Withdraw([FromBody] WithdrawRequest req)
+    {
+        var result = await _wallet.WithdrawAsync(User.GetPlayerId(), req);
+        return result.Success ? Ok(result) : BadRequest(result);
+    }
 }

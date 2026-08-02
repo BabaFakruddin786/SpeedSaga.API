@@ -38,6 +38,13 @@ public class GameController : ControllerBase
         return result.Success ? Ok(result) : BadRequest(result);
     }
 
+    [HttpPost("start-free")]
+    public async Task<IActionResult> StartFreePlay([FromBody] StartFreePlayRequest req)
+    {
+        var result = await _game.StartFreePlayAsync(User.GetPlayerId(), req);
+        return result.Success ? Ok(result) : BadRequest(result);
+    }
+
     [HttpPost("join-match")]
     public async Task<IActionResult> JoinMatch([FromBody] JoinMatchRequest req)
     {
