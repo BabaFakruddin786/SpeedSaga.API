@@ -20,8 +20,24 @@ var jwtSettings = configuration.GetSection(JwtSettings.SectionName).Get<JwtSetti
     ?? throw new InvalidOperationException("JWT settings are not configured.");
 
 builder.Services.AddSingleton<ISqlConnectionFactory, SqlConnectionFactory>();
+builder.Services.AddSingleton<SessionMoveStore>();
+builder.Services.AddSingleton<MovePersistenceService>();
+builder.Services.AddSingleton<IMovePersistenceQueue>(sp => sp.GetRequiredService<MovePersistenceService>());
+builder.Services.AddHostedService(sp => sp.GetRequiredService<MovePersistenceService>());
+builder.Services.AddHostedService<SessionMoveStoreCleanup>();
 builder.Services.AddHttpClient("Razorpay");
+builder.Services.AddHttpClient("Msg91");
 
+builder.Services.Configure<MessagingOptions>(configuration.GetSection(MessagingOptions.SectionName));
+builder.Services.AddSingleton<GameConnectionTracker>();
+builder.Services.AddScoped<IPromoService, PromoService>();
+builder.Services.AddSingleton<MessageDispatchService>();
+builder.Services.AddSingleton<IMessageDispatchQueue>(sp => sp.GetRequiredService<MessageDispatchService>());
+builder.Services.AddHostedService(sp => sp.GetRequiredService<MessageDispatchService>());
+builder.Services.AddScoped<IOtpService, OtpService>();
+builder.Services.AddScoped<IMessageDeliveryService, MessageDeliveryService>();
+builder.Services.AddScoped<IOutgoingMessageService, OutgoingMessageService>();
+builder.Services.AddScoped<IKycVerificationService, KycVerificationService>();
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IWalletService, WalletService>();
 builder.Services.AddScoped<ILevelService, LevelService>();
@@ -29,7 +45,10 @@ builder.Services.AddScoped<IGameService, GameService>();
 builder.Services.AddScoped<IPlayerService, PlayerService>();
 builder.Services.AddScoped<IRazorpayService, RazorpayService>();
 builder.Services.AddScoped<IBotDetectionService, BotDetectionService>();
+builder.Services.AddScoped<ITournamentService, TournamentService>();
 builder.Services.AddScoped<INotificationService, NotificationService>();
+builder.Services.AddScoped<IThemeService, ThemeService>();
+builder.Services.AddHostedService<PuzzleWarmupService>();
 
 builder.Services
     .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
@@ -100,7 +119,6 @@ if (app.Environment.IsDevelopment())
 
 app.UseAuthentication();
 app.UseAuthorization();
-app.UseMiddleware<GeoblockMiddleware>();
 
 app.MapControllers();
 app.MapHub<GameHub>("/hubs/game");
@@ -114,6 +132,8 @@ if (!string.IsNullOrWhiteSpace(connectionString))
     recurringJobs.AddOrUpdate<IGameService>("recalc-winrates", s => s.RecalculateWinRates(), "*/30 * * * *");
     recurringJobs.AddOrUpdate<IGameService>("cleanup-queue", s => s.CleanupExpiredQueue(), "*/1 * * * *");
     recurringJobs.AddOrUpdate<IBotDetectionService>("bot-scan", s => s.RunBotScan(), "0 * * * *");
+    recurringJobs.AddOrUpdate<IGameService>("cleanup-stale-2p", s => s.CleanupStaleTwoPlayerSessionsAsync(), "*/5 * * * *");
+    recurringJobs.AddOrUpdate<IOtpService>("cleanup-otp-sessions", s => s.CleanupExpiredSessionsAsync(), "0 3 * * *");
 }
 
 app.Run();

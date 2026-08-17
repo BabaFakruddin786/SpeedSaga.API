@@ -1,14 +1,41 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.SignalR;
+using SpeedSaga.API.Extensions;
+using SpeedSaga.API.Infrastructure;
+using SpeedSaga.API.Services;
 
 namespace SpeedSaga.API.Hubs;
 
 [Authorize(Policy = Authorization.Policies.PlayerOnly)]
 public class GameHub : Hub
 {
+    readonly GameConnectionTracker _tracker;
+    readonly IServiceScopeFactory _scopeFactory;
+
+    public GameHub(GameConnectionTracker tracker, IServiceScopeFactory scopeFactory)
+    {
+        _tracker = tracker;
+        _scopeFactory = scopeFactory;
+    }
+
+    public override Task OnConnectedAsync()
+    {
+        var playerId = Context.User?.GetPlayerId();
+        if (playerId.HasValue)
+            _tracker.Register(Context.ConnectionId, playerId.Value);
+        return base.OnConnectedAsync();
+    }
+
     public async Task JoinSession(string sessionId)
     {
         await Groups.AddToGroupAsync(Context.ConnectionId, sessionId);
+        var playerId = Context.User?.GetPlayerId();
+        if (playerId.HasValue)
+        {
+            _tracker.Register(Context.ConnectionId, playerId.Value, sessionId);
+            if (Guid.TryParse(sessionId, out var sid))
+                _tracker.SetSession(playerId.Value, sid);
+        }
         await Clients.Group(sessionId).SendAsync("PlayerJoined", Context.ConnectionId);
     }
 
@@ -44,6 +71,18 @@ public class GameHub : Hub
 
     public override async Task OnDisconnectedAsync(Exception? exception)
     {
+        var playerId = _tracker.GetPlayerId(Context.ConnectionId);
+        var sessionId = playerId.HasValue ? _tracker.GetActiveSession(playerId.Value) : null;
+        _tracker.Unregister(Context.ConnectionId);
+
+        if (playerId.HasValue && sessionId.HasValue)
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var game = scope.ServiceProvider.GetRequiredService<IGameService>();
+            await game.ForfeitPlayerAsync(sessionId.Value, playerId.Value);
+            _tracker.ClearSession(playerId.Value);
+        }
+
         await base.OnDisconnectedAsync(exception);
     }
 }

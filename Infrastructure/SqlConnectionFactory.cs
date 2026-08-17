@@ -17,5 +17,15 @@ public class SqlConnectionFactory : ISqlConnectionFactory
             ?? throw new InvalidOperationException("Connection string 'SpeedSagaDB' is not configured.");
     }
 
-    public SqlConnection CreateConnection() => new(_connectionString);
+    public SqlConnection CreateConnection()
+    {
+        var builder = new SqlConnectionStringBuilder(_connectionString)
+        {
+            MinPoolSize = 10,
+            MaxPoolSize = 300,
+            ConnectTimeout = 15,
+            MultipleActiveResultSets = true
+        };
+        return new SqlConnection(builder.ConnectionString);
+    }
 }

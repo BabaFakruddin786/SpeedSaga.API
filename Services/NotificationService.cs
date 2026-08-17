@@ -8,6 +8,7 @@ public interface INotificationService
 {
     Task<object?> GetNotificationsAsync(Guid playerId, int page);
     Task MarkReadAsync(Guid playerId, Guid notifId);
+    Task SendAsync(Guid playerId, string title, string body, string notifType);
 }
 
 public class NotificationService : INotificationService
@@ -50,6 +51,20 @@ public class NotificationService : INotificationService
         await using var cmd = new SqlCommand("USP_MarkNotificationRead", cn) { CommandType = CommandType.StoredProcedure };
         cmd.Parameters.AddWithValue("@PlayerId", playerId);
         cmd.Parameters.AddWithValue("@NotifId", notifId);
+        await cmd.ExecuteNonQueryAsync();
+    }
+
+    public async Task SendAsync(Guid playerId, string title, string body, string notifType)
+    {
+        await using var cn = _db.CreateConnection();
+        await cn.OpenAsync();
+        await using var cmd = new SqlCommand(@"
+            INSERT INTO Notifications (PlayerId, Title, Body, NotifType)
+            VALUES (@PlayerId, @Title, @Body, @NotifType)", cn);
+        cmd.Parameters.AddWithValue("@PlayerId", playerId);
+        cmd.Parameters.AddWithValue("@Title", title);
+        cmd.Parameters.AddWithValue("@Body", body);
+        cmd.Parameters.AddWithValue("@NotifType", notifType);
         await cmd.ExecuteNonQueryAsync();
     }
 }

@@ -1,4 +1,4 @@
-﻿-- ============================================================
+-- ============================================================
 -- SPEEDSAGA — COMPLETE SQL SERVER DATABASE SCRIPT
 -- All Tables, Indexes, Stored Procedures, Seed Data
 -- Compatible: SQL Server 2019+
@@ -36,10 +36,12 @@ CREATE TABLE Players (
     StateCode       NVARCHAR(10)        NULL,         -- For geoblocking
     CreatedAt       DATETIME            DEFAULT GETDATE(),
     LastLoginAt     DATETIME            NULL,
-    CONSTRAINT UQ_Player_Email   UNIQUE (ContactEmail),
-    CONSTRAINT UQ_Player_Phone   UNIQUE (ContactPhone),
     CONSTRAINT UQ_Player_Referral UNIQUE (ReferralCode)
 );
+GO
+
+CREATE UNIQUE INDEX UQ_Player_Email_NotNull ON Players(ContactEmail) WHERE ContactEmail IS NOT NULL;
+CREATE UNIQUE INDEX UQ_Player_Phone_NotNull ON Players(ContactPhone) WHERE ContactPhone IS NOT NULL;
 GO
 
 -- 1.2 Wallet
@@ -142,6 +144,37 @@ CREATE TABLE Replays (
 );
 GO
 
+-- 1.7b Player Level History (avoid repeating puzzles)
+CREATE TABLE PlayerLevelHistory (
+    HistoryId       BIGINT IDENTITY(1,1) PRIMARY KEY,
+    PlayerId        UNIQUEIDENTIFIER NOT NULL REFERENCES Players(PlayerId),
+    LevelId         INT NOT NULL REFERENCES Levels(LevelId),
+    SessionId       UNIQUEIDENTIFIER NOT NULL,
+    EntryFeePaise   BIGINT NOT NULL DEFAULT 0,
+    RewardMode      NVARCHAR(10) NOT NULL DEFAULT '3x',
+    PlayedAt        DATETIME NOT NULL DEFAULT GETDATE()
+);
+GO
+CREATE INDEX IX_PlayerLevelHistory_Player ON PlayerLevelHistory(PlayerId, PlayedAt DESC);
+GO
+
+-- 1.7c Session Moves (per-move recording for replay/audit)
+CREATE TABLE SessionMoves (
+    MoveId          BIGINT IDENTITY(1,1) PRIMARY KEY,
+    SessionId       UNIQUEIDENTIFIER NOT NULL,
+    PlayerId        UNIQUEIDENTIFIER NOT NULL REFERENCES Players(PlayerId),
+    MoveIndex       INT NOT NULL,
+    Direction       NVARCHAR(4) NOT NULL,
+    Col             INT NOT NULL,
+    Row             INT NOT NULL,
+    Timestamp       FLOAT NOT NULL,
+    CreatedAt       DATETIME NOT NULL DEFAULT GETDATE(),
+    CONSTRAINT UQ_SessionMove UNIQUE (SessionId, PlayerId, MoveIndex)
+);
+GO
+CREATE INDEX IX_SessionMoves_Session ON SessionMoves(SessionId, MoveIndex);
+GO
+
 -- 1.8 Transactions
 CREATE TABLE Transactions (
     TxnId           UNIQUEIDENTIFIER    DEFAULT NEWID()     PRIMARY KEY,
@@ -232,6 +265,8 @@ GO
 -- ============================================================
 
 -- 3.1 Register Player
+SET QUOTED_IDENTIFIER ON;
+GO
 CREATE OR ALTER PROCEDURE USP_RegisterPlayer
     @ContactEmail   NVARCHAR(150)   = NULL,
     @ContactPhone   NVARCHAR(15)    = NULL,
@@ -296,6 +331,8 @@ END
 GO
 
 -- 3.2 Login
+SET QUOTED_IDENTIFIER ON;
+GO
 CREATE OR ALTER PROCEDURE USP_LoginPlayer
     @Contact        NVARCHAR(150),
     @PlayerId       UNIQUEIDENTIFIER    OUTPUT,
@@ -455,45 +492,73 @@ CREATE OR ALTER PROCEDURE USP_AllocateLevel
     @PlayerId       UNIQUEIDENTIFIER,
     @TimeMode       NVARCHAR(10),
     @RewardMode     NVARCHAR(10),   -- '3x' or '5x'
+    @EntryFeePaise  BIGINT = 0,
     @LevelId        INT     OUTPUT,
     @GridJson       NVARCHAR(MAX) OUTPUT
 AS
 BEGIN
     SET NOCOUNT ON;
+    SET @LevelId = NULL; SET @GridJson = NULL;
 
     DECLARE @WinRate DECIMAL(5,2) = 0;
-    SELECT @WinRate = WinRatePct FROM PlayerStats WHERE PlayerId = @PlayerId;
+    SELECT @WinRate = ISNULL(WinRatePct, 0) FROM PlayerStats WHERE PlayerId = @PlayerId;
 
-    -- Target win rates per requirements
     DECLARE @TargetWin DECIMAL(5,2) = CASE @RewardMode WHEN '3x' THEN 20.00 WHEN '5x' THEN 10.00 ELSE 20.00 END;
 
-    -- Difficulty bracket
+    DECLARE @GamesInMode INT = 0;
+    SELECT @GamesInMode = COUNT(*)
+    FROM GameSessions
+    WHERE Player1Id = @PlayerId AND GameMode LIKE 'SinglePlayer%' AND RewardMode = @RewardMode
+      AND Status IN ('Active', 'Complete');
+
     DECLARE @MinDiff INT, @MaxDiff INT;
+    IF @RewardMode = '5x'
+    BEGIN
+        IF @GamesInMode < 1 SELECT @MinDiff = 40, @MaxDiff = 60;
+        ELSE SELECT @MinDiff = 75, @MaxDiff = 100;
+    END
+    ELSE IF @EntryFeePaise = 0
+        SELECT @MinDiff = 15, @MaxDiff = 50;
+    ELSE
+    BEGIN
+        IF @GamesInMode < 2 SELECT @MinDiff = 30, @MaxDiff = 55;
+        ELSE SELECT @MinDiff = 65, @MaxDiff = 95;
+    END
 
-    IF @WinRate > @TargetWin + 10       -- Much higher than target → very hard
-        SELECT @MinDiff = 80, @MaxDiff = 100;
-    ELSE IF @WinRate > @TargetWin + 5  -- Slightly above target → hard
-        SELECT @MinDiff = 60, @MaxDiff = 85;
-    ELSE IF @WinRate > @TargetWin       -- At/near target → medium-hard
-        SELECT @MinDiff = 45, @MaxDiff = 70;
-    ELSE IF @WinRate < @TargetWin - 15  -- Much below (retention) → easier
-        SELECT @MinDiff = 15, @MaxDiff = 40;
-    ELSE                                 -- Normal → medium
-        SELECT @MinDiff = 30, @MaxDiff = 60;
+    DECLARE @FeeBoost INT = CASE
+        WHEN @EntryFeePaise >= 200000 THEN 20 WHEN @EntryFeePaise >= 100000 THEN 15
+        WHEN @EntryFeePaise >= 50000 THEN 12 WHEN @EntryFeePaise >= 30000 THEN 10
+        WHEN @EntryFeePaise >= 20000 THEN 8 WHEN @EntryFeePaise >= 10000 THEN 5 ELSE 0 END;
+    SET @MinDiff = @MinDiff + @FeeBoost; SET @MaxDiff = @MaxDiff + @FeeBoost;
+    IF @MaxDiff > 100 SET @MaxDiff = 100;
+    IF @MinDiff > @MaxDiff SET @MinDiff = @MaxDiff - 5;
 
-    -- Random level in bracket
-    SELECT TOP 1 @LevelId = LevelId, @GridJson = GridJson
-    FROM Levels
-    WHERE TimeMode = @TimeMode
-      AND DifficultyScore BETWEEN @MinDiff AND @MaxDiff
-      AND IsActive = 1
-    ORDER BY NEWID();   -- Random shuffle
+    IF @EntryFeePaise > 0
+    BEGIN
+        IF @WinRate > @TargetWin + 10 AND @MinDiff < 80 SET @MinDiff = 80;
+        IF @WinRate > @TargetWin + 5 AND @MaxDiff < 90 SET @MaxDiff = CASE WHEN @MaxDiff + 10 > 100 THEN 100 ELSE @MaxDiff + 10 END;
+    END
 
-    -- Fallback to any level if bracket is empty
+    SELECT TOP 1 @LevelId = LevelId, @GridJson = GridJson FROM Levels
+    WHERE TimeMode = @TimeMode AND DifficultyScore BETWEEN @MinDiff AND @MaxDiff AND IsActive = 1
+      AND LevelId NOT IN (SELECT TOP 50 LevelId FROM PlayerLevelHistory WHERE PlayerId = @PlayerId ORDER BY PlayedAt DESC)
+    ORDER BY NEWID();
+
     IF @LevelId IS NULL
-        SELECT TOP 1 @LevelId = LevelId, @GridJson = GridJson
-        FROM Levels WHERE TimeMode = @TimeMode AND IsActive = 1
+        SELECT TOP 1 @LevelId = LevelId, @GridJson = GridJson FROM Levels
+        WHERE TimeMode = @TimeMode AND DifficultyScore BETWEEN @MinDiff AND @MaxDiff AND IsActive = 1
+          AND LevelId NOT IN (SELECT TOP 10 LevelId FROM PlayerLevelHistory WHERE PlayerId = @PlayerId ORDER BY PlayedAt DESC)
         ORDER BY NEWID();
+
+    IF @LevelId IS NULL
+        SELECT TOP 1 @LevelId = LevelId, @GridJson = GridJson FROM Levels
+        WHERE TimeMode = @TimeMode AND IsActive = 1
+          AND LevelId NOT IN (SELECT TOP 3 LevelId FROM PlayerLevelHistory WHERE PlayerId = @PlayerId ORDER BY PlayedAt DESC)
+        ORDER BY NEWID();
+
+    IF @LevelId IS NULL
+        SELECT TOP 1 @LevelId = LevelId, @GridJson = GridJson FROM Levels
+        WHERE TimeMode = @TimeMode AND IsActive = 1 ORDER BY NEWID();
 END
 GO
 
@@ -716,19 +781,70 @@ BEGIN
 END
 GO
 
--- 3.15 Save/Get Replay
+-- 3.15 Level history & move recording
+CREATE OR ALTER PROCEDURE USP_RecordLevelPlayed
+    @PlayerId UNIQUEIDENTIFIER, @LevelId INT, @SessionId UNIQUEIDENTIFIER,
+    @EntryFeePaise BIGINT = 0, @RewardMode NVARCHAR(10) = '3x'
+AS BEGIN SET NOCOUNT ON;
+    INSERT INTO PlayerLevelHistory (PlayerId, LevelId, SessionId, EntryFeePaise, RewardMode)
+    VALUES (@PlayerId, @LevelId, @SessionId, @EntryFeePaise, @RewardMode);
+END
+GO
+
+CREATE OR ALTER PROCEDURE USP_RecordSessionMove
+    @SessionId UNIQUEIDENTIFIER, @PlayerId UNIQUEIDENTIFIER,
+    @Direction NVARCHAR(4), @Col INT, @Row INT, @Timestamp FLOAT
+AS BEGIN SET NOCOUNT ON;
+    DECLARE @NextIndex INT = 1;
+    SELECT @NextIndex = ISNULL(MAX(MoveIndex), 0) + 1 FROM SessionMoves WHERE SessionId = @SessionId AND PlayerId = @PlayerId;
+    INSERT INTO SessionMoves (SessionId, PlayerId, MoveIndex, Direction, Col, Row, Timestamp)
+    VALUES (@SessionId, @PlayerId, @NextIndex, @Direction, @Col, @Row, @Timestamp);
+END
+GO
+
+CREATE OR ALTER PROCEDURE USP_GetPlayerGameHistory
+    @PlayerId UNIQUEIDENTIFIER, @Page INT = 1, @PageSize INT = 20
+AS BEGIN SET NOCOUNT ON;
+    DECLARE @Offset INT = (@Page - 1) * @PageSize;
+    SELECT GS.SessionId, GS.GameMode, GS.RewardMode, GS.EntryFeePaise, GS.RewardPaise, GS.LevelId,
+           GS.Status, GS.StartedAt, GS.CompletedAt,
+           CASE WHEN GS.WinnerId = @PlayerId THEN 1 ELSE 0 END AS IsWon,
+           ISNULL(R.TotalMoves, (SELECT COUNT(*) FROM SessionMoves SM WHERE SM.SessionId = GS.SessionId AND SM.PlayerId = @PlayerId)) AS TotalMoves,
+           R.SolvedInSecs, GS.IsReplayAvailable,
+           (SELECT COUNT(*) FROM SessionMoves SM WHERE SM.SessionId = GS.SessionId AND SM.PlayerId = @PlayerId) AS RecordedMoves
+    FROM GameSessions GS
+    LEFT JOIN Replays R ON R.SessionId = GS.SessionId AND R.PlayerId = @PlayerId
+    WHERE GS.Player1Id = @PlayerId OR GS.Player2Id = @PlayerId
+    ORDER BY GS.StartedAt DESC OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
+END
+GO
+
+-- 3.16 Save/Get Replay
 CREATE OR ALTER PROCEDURE USP_GetReplay
     @SessionId  UNIQUEIDENTIFIER,
     @PlayerId   UNIQUEIDENTIFIER    = NULL
 AS
 BEGIN
     SET NOCOUNT ON;
-    SELECT R.ReplayId, R.PlayerId, R.MovesJson, R.TotalMoves, R.SolvedInSecs, R.CreatedAt,
-           G.LevelId, G.TimeLimitSecs, G.GameMode
-    FROM Replays R
-    INNER JOIN GameSessions G ON G.SessionId = R.SessionId
-    WHERE R.SessionId = @SessionId
-      AND (@PlayerId IS NULL OR R.PlayerId = @PlayerId);
+    DECLARE @MovesJson NVARCHAR(MAX) = NULL, @TotalMoves INT = 0, @SolvedSecs INT = NULL;
+    DECLARE @ReplayPlayer UNIQUEIDENTIFIER = @PlayerId;
+
+    IF @PlayerId IS NOT NULL AND EXISTS (SELECT 1 FROM SessionMoves WHERE SessionId = @SessionId AND PlayerId = @PlayerId)
+    BEGIN
+        SELECT @MovesJson = (SELECT Direction AS dir, Col AS col, Row AS row, Timestamp AS timestamp
+            FROM SessionMoves WHERE SessionId = @SessionId AND PlayerId = @PlayerId ORDER BY MoveIndex FOR JSON PATH);
+        SELECT @TotalMoves = COUNT(*) FROM SessionMoves WHERE SessionId = @SessionId AND PlayerId = @PlayerId;
+    END
+
+    IF @MovesJson IS NULL
+        SELECT TOP 1 @MovesJson = R.MovesJson, @TotalMoves = R.TotalMoves, @SolvedSecs = R.SolvedInSecs, @ReplayPlayer = R.PlayerId
+        FROM Replays R WHERE R.SessionId = @SessionId AND (@PlayerId IS NULL OR R.PlayerId = @PlayerId) ORDER BY R.CreatedAt DESC;
+    ELSE
+        SELECT TOP 1 @SolvedSecs = R.SolvedInSecs FROM Replays R WHERE R.SessionId = @SessionId AND R.PlayerId = @PlayerId;
+
+    SELECT @SessionId AS SessionId, @ReplayPlayer AS PlayerId, @MovesJson AS MovesJson, @TotalMoves AS TotalMoves,
+           @SolvedSecs AS SolvedInSecs, G.LevelId, G.TimeLimitSecs, G.GameMode, G.EntryFeePaise, G.RewardPaise, G.StartedAt, G.CompletedAt
+    FROM GameSessions G WHERE G.SessionId = @SessionId;
 END
 GO
 

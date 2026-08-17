@@ -8,6 +8,7 @@ public interface IRazorpayService
 {
     bool VerifySignature(string orderId, string paymentId, string signature);
     Task<string> CreateOrderAsync(long amountPaise);
+    string GetKeyId();
 }
 
 public class RazorpayService : IRazorpayService
@@ -22,6 +23,8 @@ public class RazorpayService : IRazorpayService
         _secret = configuration["Razorpay:KeySecret"] ?? string.Empty;
         _httpClientFactory = httpClientFactory;
     }
+
+    public string GetKeyId() => _keyId;
 
     public bool VerifySignature(string orderId, string paymentId, string signature)
     {

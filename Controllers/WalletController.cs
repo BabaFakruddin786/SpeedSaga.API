@@ -31,7 +31,12 @@ public class WalletController : ControllerBase
     public async Task<IActionResult> CreateOrder([FromBody] CreateDepositOrderRequest req)
     {
         var orderId = await _razorpay.CreateOrderAsync(req.AmountPaise);
-        return Ok(new ApiResponse<object>(true, "Order created", new { OrderId = orderId, AmountPaise = req.AmountPaise }));
+        return Ok(new ApiResponse<object>(true, "Order created", new
+        {
+            OrderId = orderId,
+            AmountPaise = req.AmountPaise,
+            KeyId = _razorpay.GetKeyId()
+        }));
     }
 
     [HttpPost("deposit")]
@@ -49,6 +54,13 @@ public class WalletController : ControllerBase
     public async Task<IActionResult> Withdraw([FromBody] WithdrawRequest req)
     {
         var result = await _wallet.WithdrawAsync(User.GetPlayerId(), req);
+        return result.Success ? Ok(result) : BadRequest(result);
+    }
+
+    [HttpPost("dev-deposit")]
+    public async Task<IActionResult> DevDeposit([FromBody] DevDepositRequest req)
+    {
+        var result = await _wallet.DevDepositAsync(User.GetPlayerId(), req.AmountPaise);
         return result.Success ? Ok(result) : BadRequest(result);
     }
 }

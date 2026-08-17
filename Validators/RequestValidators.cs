@@ -143,3 +143,23 @@ public class WithdrawRequestValidator : AbstractValidator<WithdrawRequest>
 {
     public WithdrawRequestValidator() => RuleFor(x => x.AmountPaise).GreaterThanOrEqualTo(10000);
 }
+
+public class UpdateProfileRequestValidator : AbstractValidator<UpdateProfileRequest>
+{
+    public UpdateProfileRequestValidator()
+    {
+        RuleFor(x => x.Username)
+            .MaximumLength(80).When(x => !string.IsNullOrWhiteSpace(x.Username));
+
+        RuleFor(x => x.StateCode)
+            .MaximumLength(10).When(x => !string.IsNullOrWhiteSpace(x.StateCode));
+
+        RuleFor(x => x.ContactEmail)
+            .EmailAddress().When(x => !string.IsNullOrWhiteSpace(x.ContactEmail))
+            .WithMessage("Invalid email format.");
+
+        RuleFor(x => x.ContactPhone)
+            .Matches(@"^[6-9]\d{9}$").When(x => !string.IsNullOrWhiteSpace(x.ContactPhone))
+            .WithMessage("Phone must be a valid 10-digit Indian mobile number.");
+    }
+}
