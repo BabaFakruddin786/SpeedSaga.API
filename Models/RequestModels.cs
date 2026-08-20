@@ -29,16 +29,20 @@ public record SubmitResultRequest(
 public record JoinMatchRequest(
     long EntryFeePaise,
     int TimeSecs,
-    string SignalRConnId);
+    string SignalRConnId,
+    string? GameType = null);
 
 public record CreateDepositOrderRequest(long AmountPaise);
 
 public record StartSinglePlayerRequest(
     string TimeMode,
     string RewardMode,
-    long EntryFeePaise);
+    long EntryFeePaise,
+    string? GameType = null);
 
-public record StartFreePlayRequest(string TimeMode);
+public record StartFreePlayRequest(string TimeMode, string? GameType = null);
+
+public record TicTacToeMoveRequest(string SessionId, int CellIndex);
 
 public record ForgotPasswordRequest(string Contact, string? Channel = null);
 

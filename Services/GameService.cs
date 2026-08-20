@@ -17,6 +17,7 @@ public interface IGameService
     Task<object?> GetSessionStatusAsync(Guid playerId, string sessionId);
     Task<ApiResponse<object>> StartSinglePlayerAsync(Guid playerId, StartSinglePlayerRequest req);
     Task<ApiResponse<object>> StartFreePlayAsync(Guid playerId, StartFreePlayRequest req);
+    Task<ApiResponse<object>> TicTacToeMoveAsync(Guid playerId, TicTacToeMoveRequest req);
     Task<object?> GetReplayAsync(Guid sessionId, Guid? playerId);
     Task<object?> GetGameHistoryAsync(Guid playerId, int page = 1, int pageSize = 50);
     Task RecalculateWinRates();
@@ -34,8 +35,9 @@ public class GameService : IGameService
     private readonly SessionMoveStore _moves;
     private readonly INotificationService _notifications;
     private readonly IMovePersistenceQueue _moveQueue;
+    private readonly TicTacToeStateStore _ttt;
 
-    public GameService(ISqlConnectionFactory db, IWalletService wallet, ILevelService level, IHubContext<GameHub> hub, SessionMoveStore moves, INotificationService notifications, IMovePersistenceQueue moveQueue)
+    public GameService(ISqlConnectionFactory db, IWalletService wallet, ILevelService level, IHubContext<GameHub> hub, SessionMoveStore moves, INotificationService notifications, IMovePersistenceQueue moveQueue, TicTacToeStateStore ttt)
     {
         _db = db;
         _wallet = wallet;
@@ -44,36 +46,61 @@ public class GameService : IGameService
         _moves = moves;
         _notifications = notifications;
         _moveQueue = moveQueue;
+        _ttt = ttt;
     }
 
     public async Task<ApiResponse<object>> StartSinglePlayerAsync(Guid playerId, StartSinglePlayerRequest req)
     {
+        var gameType = GameTypes.Normalize(req.GameType);
+        if (!GameTypes.IsValid(gameType))
+            return new ApiResponse<object>(false, "Unknown game type.");
+        if (gameType == GameTypes.TicTacToe)
+            return new ApiResponse<object>(false, "Tic Tac Toe uses free play or two player modes.");
+
         if (!await _wallet.HasSufficientBalanceAsync(playerId, req.EntryFeePaise))
             return new ApiResponse<object>(false, "Insufficient balance.");
-
-        var level = await _level.AllocateLevelAsync(playerId, new AllocateLevelRequest(req.TimeMode, req.RewardMode, req.EntryFeePaise));
-        if (level == null || !PuzzleTemplateProvider.IsValidGridJson(level.GridJson))
-            return new ApiResponse<object>(false, "No level available for the selected mode.");
 
         var rewardPaise = req.RewardMode == "5x" ? req.EntryFeePaise * 5 : req.EntryFeePaise * 3;
         var timeLimitSecs = ResolveTimeLimit(req.TimeMode, req.RewardMode);
         var sessionId = Guid.NewGuid();
         var gameMode = req.RewardMode == "5x" ? "SinglePlayer5x" : "SinglePlayer3x";
 
+        int levelId = 0;
+        string gridJson;
+        string puzzleTier = "Easy";
+        int targetArrows = 0;
+
+        if (gameType == GameTypes.CarParking)
+        {
+            puzzleTier = TierFromTimeMode(req.TimeMode);
+            gridJson = ParkingLevelGenerator.Generate(puzzleTier);
+        }
+        else
+        {
+            var level = await _level.AllocateLevelAsync(playerId, new AllocateLevelRequest(req.TimeMode, req.RewardMode, req.EntryFeePaise));
+            if (level == null || !PuzzleTemplateProvider.IsValidGridJson(level.GridJson))
+                return new ApiResponse<object>(false, "No level available for the selected mode.");
+            levelId = level.LevelId;
+            gridJson = level.GridJson;
+            puzzleTier = level.PuzzleTier;
+            targetArrows = level.TargetArrows;
+        }
+
         await using var cn = _db.CreateConnection();
         await cn.OpenAsync();
 
         await using (var insert = new SqlCommand(@"
-            INSERT INTO GameSessions (SessionId, Player1Id, GameMode, RewardMode, EntryFeePaise, RewardPaise, LevelId, TimeLimitSecs, Status, StartedAt)
-            VALUES (@SessionId, @PlayerId, @GameMode, @RewardMode, @EntryFee, @Reward, @LevelId, @TimeLimit, 'Active', GETDATE())", cn))
+            INSERT INTO GameSessions (SessionId, Player1Id, GameMode, GameType, RewardMode, EntryFeePaise, RewardPaise, LevelId, TimeLimitSecs, Status, StartedAt)
+            VALUES (@SessionId, @PlayerId, @GameMode, @GameType, @RewardMode, @EntryFee, @Reward, @LevelId, @TimeLimit, 'Active', GETDATE())", cn))
         {
             insert.Parameters.AddWithValue("@SessionId", sessionId);
             insert.Parameters.AddWithValue("@PlayerId", playerId);
             insert.Parameters.AddWithValue("@GameMode", gameMode);
+            insert.Parameters.AddWithValue("@GameType", gameType);
             insert.Parameters.AddWithValue("@RewardMode", req.RewardMode);
             insert.Parameters.AddWithValue("@EntryFee", req.EntryFeePaise);
             insert.Parameters.AddWithValue("@Reward", rewardPaise);
-            insert.Parameters.AddWithValue("@LevelId", level.LevelId);
+            insert.Parameters.AddWithValue("@LevelId", levelId == 0 ? DBNull.Value : levelId);
             insert.Parameters.AddWithValue("@TimeLimit", timeLimitSecs);
             await insert.ExecuteNonQueryAsync();
         }
@@ -87,15 +114,17 @@ public class GameService : IGameService
             return deduct;
         }
 
-        _ = RecordLevelPlayedAsync(playerId, level.LevelId, sessionId, req.EntryFeePaise, req.RewardMode);
+        if (levelId > 0)
+            _ = RecordLevelPlayedAsync(playerId, levelId, sessionId, req.EntryFeePaise, req.RewardMode);
 
         return new ApiResponse<object>(true, "Single player session started", new
         {
             SessionId = sessionId,
-            level.LevelId,
-            level.GridJson,
-            PuzzleTier = level.PuzzleTier,
-            TargetArrows = level.TargetArrows,
+            GameType = gameType,
+            LevelId = levelId,
+            GridJson = gridJson,
+            PuzzleTier = puzzleTier,
+            TargetArrows = targetArrows,
             RewardPaise = rewardPaise,
             TimeLimitSecs = timeLimitSecs
         });
@@ -103,36 +132,128 @@ public class GameService : IGameService
 
     public async Task<ApiResponse<object>> StartFreePlayAsync(Guid playerId, StartFreePlayRequest req)
     {
-        var level = await _level.AllocateLevelAsync(playerId, new AllocateLevelRequest(req.TimeMode, "3x"));
-        if (level == null)
-            return new ApiResponse<object>(false, "No level available for the selected mode.");
+        var gameType = GameTypes.Normalize(req.GameType);
+        if (!GameTypes.IsValid(gameType))
+            return new ApiResponse<object>(false, "Unknown game type.");
 
         var timeLimitSecs = ParseTimeMode(req.TimeMode);
         var sessionId = Guid.NewGuid();
+        int levelId = 0;
+        string gridJson;
+        string puzzleTier = "Easy";
+        int targetArrows = 0;
+
+        switch (gameType)
+        {
+            case GameTypes.CarParking:
+                puzzleTier = TierFromTimeMode(req.TimeMode);
+                gridJson = ParkingLevelGenerator.Generate(puzzleTier);
+                break;
+            case GameTypes.TicTacToe:
+                gridJson = TicTacToeStateStore.EmptyBoardJson(vsAi: true);
+                _ttt.GetOrCreate(sessionId.ToString(), vsAi: true);
+                timeLimitSecs = 0;
+                break;
+            default:
+                var level = await _level.AllocateLevelAsync(playerId, new AllocateLevelRequest(req.TimeMode, "3x"));
+                if (level == null)
+                    return new ApiResponse<object>(false, "No level available for the selected mode.");
+                levelId = level.LevelId;
+                gridJson = level.GridJson;
+                puzzleTier = level.PuzzleTier;
+                targetArrows = level.TargetArrows;
+                break;
+        }
 
         await using var cn = _db.CreateConnection();
         await cn.OpenAsync();
         await using var insert = new SqlCommand(@"
-            INSERT INTO GameSessions (SessionId, Player1Id, GameMode, EntryFeePaise, RewardPaise, LevelId, TimeLimitSecs, Status, StartedAt)
-            VALUES (@SessionId, @PlayerId, 'FreePlay', 0, 0, @LevelId, @TimeLimit, 'Active', GETDATE())", cn);
+            INSERT INTO GameSessions (SessionId, Player1Id, GameMode, GameType, EntryFeePaise, RewardPaise, LevelId, TimeLimitSecs, Status, StartedAt)
+            VALUES (@SessionId, @PlayerId, 'FreePlay', @GameType, 0, 0, @LevelId, @TimeLimit, 'Active', GETDATE())", cn);
         insert.Parameters.AddWithValue("@SessionId", sessionId);
         insert.Parameters.AddWithValue("@PlayerId", playerId);
-        insert.Parameters.AddWithValue("@LevelId", level.LevelId);
+        insert.Parameters.AddWithValue("@GameType", gameType);
+        insert.Parameters.AddWithValue("@LevelId", levelId == 0 ? DBNull.Value : levelId);
         insert.Parameters.AddWithValue("@TimeLimit", timeLimitSecs);
         await insert.ExecuteNonQueryAsync();
 
-        _ = RecordLevelPlayedAsync(playerId, level.LevelId, sessionId, 0, "3x");
+        if (levelId > 0)
+            _ = RecordLevelPlayedAsync(playerId, levelId, sessionId, 0, "3x");
 
         return new ApiResponse<object>(true, "Free play session started", new
         {
             SessionId = sessionId,
-            level.LevelId,
-            level.GridJson,
-            PuzzleTier = level.PuzzleTier,
-            TargetArrows = level.TargetArrows,
+            GameType = gameType,
+            LevelId = levelId,
+            GridJson = gridJson,
+            PuzzleTier = puzzleTier,
+            TargetArrows = targetArrows,
             TimeLimitSecs = timeLimitSecs
         });
     }
+
+    public async Task<ApiResponse<object>> TicTacToeMoveAsync(Guid playerId, TicTacToeMoveRequest req)
+    {
+        if (!Guid.TryParse(req.SessionId, out var sessionId))
+            return new ApiResponse<object>(false, "Invalid session.");
+
+        await using var cn = _db.CreateConnection();
+        await cn.OpenAsync();
+        await using var cmd = new SqlCommand(@"
+            SELECT Player1Id, Player2Id, GameType, GameMode, Status
+            FROM GameSessions WHERE SessionId = @SessionId", cn);
+        cmd.Parameters.AddWithValue("@SessionId", sessionId);
+        await using var rdr = await cmd.ExecuteReaderAsync();
+        if (!await rdr.ReadAsync())
+            return new ApiResponse<object>(false, "Session not found.");
+        if (rdr["GameType"]?.ToString() != GameTypes.TicTacToe)
+            return new ApiResponse<object>(false, "Not a Tic Tac Toe session.");
+        if (rdr["Status"]?.ToString() != "Active")
+            return new ApiResponse<object>(false, "Session is not active.");
+
+        var p1 = (Guid)rdr["Player1Id"];
+        Guid? p2 = rdr["Player2Id"] == DBNull.Value ? null : (Guid)rdr["Player2Id"];
+        var mode = rdr["GameMode"]?.ToString() ?? "";
+        bool vsAi = mode == "FreePlay";
+
+        var move = _ttt.TryMove(req.SessionId, playerId, p1, p2, req.CellIndex, vsAi);
+        if (!move.Success)
+            return new ApiResponse<object>(false, move.Message);
+
+        if (move.Finished && p2.HasValue)
+        {
+            var winnerId = move.Winner == 1 ? p1 : move.Winner == 2 ? p2.Value : (Guid?)null;
+            var oppConn = await GetOpponentConnIdAsync(playerId, sessionId);
+            if (!string.IsNullOrEmpty(oppConn))
+            {
+                await _hub.Clients.Client(oppConn).SendAsync("TttUpdated", new
+                {
+                    Board = move.Board,
+                    move.CurrentTurn,
+                    move.Winner,
+                    move.IsDraw,
+                    move.Finished
+                });
+            }
+        }
+
+        return new ApiResponse<object>(true, move.Message, new
+        {
+            Board = move.Board,
+            move.CurrentTurn,
+            move.Winner,
+            move.IsDraw,
+            move.Finished
+        });
+    }
+
+    static string TierFromTimeMode(string timeMode) => timeMode switch
+    {
+        "2min" => "Medium",
+        "3min" => "Hard",
+        "5min" => "SuperHard",
+        _ => "Easy"
+    };
 
     public async Task<ApiResponse<object>> SubmitResultAsync(Guid playerId, SubmitResultRequest req)
     {
@@ -156,6 +277,7 @@ public class GameService : IGameService
         if (r == 1)
         {
             _moves.Clear(req.SessionId.ToString());
+            _ttt.Remove(req.SessionId.ToString());
             await UpdateTournamentScoreIfNeededAsync(playerId, req.SessionId, req.IsWon, req.SolveSecs, req.TotalMoves);
             await SendGameResultNotificationsAsync(playerId, req.SessionId, req.IsWon);
             return new ApiResponse<object>(true, (string)pMsg.Value!);
@@ -226,6 +348,12 @@ public class GameService : IGameService
 
     public async Task<ApiResponse<object>> JoinMatchAsync(Guid playerId, JoinMatchRequest req)
     {
+        var gameType = GameTypes.Normalize(req.GameType);
+        if (!GameTypes.IsValid(gameType))
+            return new ApiResponse<object>(false, "Unknown game type.");
+        if (gameType == GameTypes.CarParking)
+            return new ApiResponse<object>(false, "Car Parking is single-player only.");
+
         if (!await _wallet.HasSufficientBalanceAsync(playerId, req.EntryFeePaise))
             return new ApiResponse<object>(false, "Insufficient balance.");
 
@@ -236,6 +364,7 @@ public class GameService : IGameService
         cmd.Parameters.AddWithValue("@FeePaise", req.EntryFeePaise);
         cmd.Parameters.AddWithValue("@TimeSecs", req.TimeSecs);
         cmd.Parameters.AddWithValue("@ConnId", req.SignalRConnId);
+        cmd.Parameters.AddWithValue("@GameType", gameType);
 
         var pSess = cmd.Parameters.Add("@SessionId", SqlDbType.UniqueIdentifier);
         pSess.Direction = ParameterDirection.Output;
@@ -263,13 +392,26 @@ public class GameService : IGameService
             }
 
             var timeMode = SecsToTimeMode(req.TimeSecs);
-            var level = await _level.AllocateLevelAsync(playerId, new AllocateLevelRequest(timeMode, "3x", req.EntryFeePaise));
-            if (level != null)
+            int levelId = 0;
+            string? gridJson = null;
+
+            if (gameType == GameTypes.TicTacToe)
             {
-                await SetSessionLevelAsync(sessionId.Value, level.LevelId);
-                await RecordLevelPlayedAsync(playerId, level.LevelId, sessionId.Value, req.EntryFeePaise, "3x");
-                if (opponentId.HasValue)
-                    await RecordLevelPlayedAsync(opponentId.Value, level.LevelId, sessionId.Value, req.EntryFeePaise, "3x");
+                gridJson = TicTacToeStateStore.EmptyBoardJson(vsAi: false);
+                _ttt.GetOrCreate(sessionId.Value.ToString(), vsAi: false);
+            }
+            else
+            {
+                var level = await _level.AllocateLevelAsync(playerId, new AllocateLevelRequest(timeMode, "3x", req.EntryFeePaise));
+                if (level != null)
+                {
+                    levelId = level.LevelId;
+                    gridJson = level.GridJson;
+                    await SetSessionLevelAsync(sessionId.Value, level.LevelId);
+                    await RecordLevelPlayedAsync(playerId, level.LevelId, sessionId.Value, req.EntryFeePaise, "3x");
+                    if (opponentId.HasValue)
+                        await RecordLevelPlayedAsync(opponentId.Value, level.LevelId, sessionId.Value, req.EntryFeePaise, "3x");
+                }
             }
 
             var waitConn = opponentId.HasValue
@@ -279,10 +421,11 @@ public class GameService : IGameService
             var matchPayload = new
             {
                 SessionId = sessionId,
+                GameType = gameType,
                 IsWaiting = false,
                 OpponentId = opponentId,
-                LevelId = level?.LevelId,
-                GridJson = level?.GridJson,
+                LevelId = levelId,
+                GridJson = gridJson,
                 TimeLimitSecs = req.TimeSecs,
                 RewardPaise = rewardPaise
             };
@@ -359,6 +502,21 @@ public class GameService : IGameService
         cmd.Parameters.AddWithValue("@SessionId", sessionId);
         var result = await cmd.ExecuteScalarAsync();
         return result?.ToString();
+    }
+
+    async Task<string?> GetOpponentConnIdAsync(Guid playerId, Guid sessionId)
+    {
+        await using var cn = _db.CreateConnection();
+        await cn.OpenAsync();
+        await using var cmd = new SqlCommand(@"
+            SELECT Player1Id, Player2Id FROM GameSessions WHERE SessionId = @SessionId", cn);
+        cmd.Parameters.AddWithValue("@SessionId", sessionId);
+        await using var rdr = await cmd.ExecuteReaderAsync();
+        if (!await rdr.ReadAsync()) return null;
+        var p1 = (Guid)rdr["Player1Id"];
+        var p2 = rdr["Player2Id"] == DBNull.Value ? (Guid?)null : (Guid)rdr["Player2Id"];
+        var opp = p1 == playerId ? p2 : p1;
+        return opp.HasValue ? await GetPlayerConnIdAsync(opp.Value, sessionId) : null;
     }
 
     static string SecsToTimeMode(int secs) => secs switch

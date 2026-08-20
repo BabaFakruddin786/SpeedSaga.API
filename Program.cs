@@ -21,6 +21,7 @@ var jwtSettings = configuration.GetSection(JwtSettings.SectionName).Get<JwtSetti
 
 builder.Services.AddSingleton<ISqlConnectionFactory, SqlConnectionFactory>();
 builder.Services.AddSingleton<SessionMoveStore>();
+builder.Services.AddSingleton<TicTacToeStateStore>();
 builder.Services.AddSingleton<MovePersistenceService>();
 builder.Services.AddSingleton<IMovePersistenceQueue>(sp => sp.GetRequiredService<MovePersistenceService>());
 builder.Services.AddHostedService(sp => sp.GetRequiredService<MovePersistenceService>());

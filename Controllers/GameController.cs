@@ -71,6 +71,13 @@ public class GameController : ControllerBase
     public async Task<IActionResult> SessionStatus([FromQuery] string sessionId)
         => Ok(await _game.GetSessionStatusAsync(User.GetPlayerId(), sessionId));
 
+    [HttpPost("ttt-move")]
+    public async Task<IActionResult> TicTacToeMove([FromBody] TicTacToeMoveRequest req)
+    {
+        var result = await _game.TicTacToeMoveAsync(User.GetPlayerId(), req);
+        return result.Success ? Ok(result) : BadRequest(result);
+    }
+
     [HttpPost("result")]
     public async Task<IActionResult> SubmitResult([FromBody] SubmitResultRequest req)
     {
