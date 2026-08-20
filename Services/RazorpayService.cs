@@ -7,7 +7,7 @@ namespace SpeedSaga.API.Services;
 public interface IRazorpayService
 {
     bool VerifySignature(string orderId, string paymentId, string signature);
-    Task<string> CreateOrderAsync(long amountPaise);
+    Task<string> CreateOrderAsync(long amountPaise, Guid playerId);
     string GetKeyId();
 }
 
@@ -38,7 +38,7 @@ public class RazorpayService : IRazorpayService
         return expected == signature.ToLowerInvariant();
     }
 
-    public async Task<string> CreateOrderAsync(long amountPaise)
+    public async Task<string> CreateOrderAsync(long amountPaise, Guid playerId)
     {
         var client = _httpClientFactory.CreateClient("Razorpay");
         var auth = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{_keyId}:{_secret}"));
@@ -49,7 +49,8 @@ public class RazorpayService : IRazorpayService
         {
             amount = amountPaise,
             currency = "INR",
-            receipt = $"rcpt_{Guid.NewGuid():N}"
+            receipt = $"rcpt_{Guid.NewGuid():N}",
+            notes = new { playerId = playerId.ToString() }
         });
 
         var response = await client.PostAsync(

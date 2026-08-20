@@ -9,6 +9,7 @@ public interface IWalletService
 {
     Task<object?> GetWalletAsync(Guid playerId);
     Task<ApiResponse<object>> ProcessDepositAsync(Guid playerId, DepositRequest req);
+    Task<ApiResponse<object>> ProcessDepositFromWebhookAsync(Guid playerId, long amountPaise, string orderId, string paymentId);
     Task<ApiResponse<object>> DeductEntryFeeAsync(Guid playerId, Guid sessionId, long feePaise);
     Task<ApiResponse<object>> WithdrawAsync(Guid playerId, WithdrawRequest req);
     Task<object?> GetTransactionsAsync(Guid playerId, string? type, int page);
@@ -91,6 +92,32 @@ public class WalletService : IWalletService
             await _notifications.SendAsync(playerId, "Deposit successful",
                 $"Rs {req.AmountPaise / 100.0:0} added to your wallet.", "Deposit");
             return new ApiResponse<object>(true, (string)pMsg.Value!, new { AmountRs = req.AmountPaise / 100.0 });
+        }
+        return new ApiResponse<object>(false, (string)pMsg.Value!);
+    }
+
+    public async Task<ApiResponse<object>> ProcessDepositFromWebhookAsync(Guid playerId, long amountPaise, string orderId, string paymentId)
+    {
+        await using var cn = _db.CreateConnection();
+        await cn.OpenAsync();
+        await using var cmd = new SqlCommand("USP_ProcessDeposit", cn) { CommandType = CommandType.StoredProcedure };
+        cmd.Parameters.AddWithValue("@PlayerId", playerId);
+        cmd.Parameters.AddWithValue("@AmountPaise", amountPaise);
+        cmd.Parameters.AddWithValue("@RazorpayOrderId", orderId);
+        cmd.Parameters.AddWithValue("@RazorpayPaymentId", paymentId);
+
+        var pRes = cmd.Parameters.Add("@Result", SqlDbType.Int);
+        pRes.Direction = ParameterDirection.Output;
+        var pMsg = cmd.Parameters.Add("@Message", SqlDbType.NVarChar, 200);
+        pMsg.Direction = ParameterDirection.Output;
+        await cmd.ExecuteNonQueryAsync();
+
+        var r = (int)pRes.Value!;
+        if (r == 1)
+        {
+            await _notifications.SendAsync(playerId, "Deposit successful",
+                $"Rs {amountPaise / 100.0:0} added to your wallet.", "Deposit");
+            return new ApiResponse<object>(true, (string)pMsg.Value!, new { AmountRs = amountPaise / 100.0 });
         }
         return new ApiResponse<object>(false, (string)pMsg.Value!);
     }

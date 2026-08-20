@@ -13,11 +13,13 @@ public class WalletController : ControllerBase
 {
     private readonly IWalletService _wallet;
     private readonly IRazorpayService _razorpay;
+    private readonly IWebHostEnvironment _env;
 
-    public WalletController(IWalletService wallet, IRazorpayService razorpay)
+    public WalletController(IWalletService wallet, IRazorpayService razorpay, IWebHostEnvironment env)
     {
         _wallet = wallet;
         _razorpay = razorpay;
+        _env = env;
     }
 
     [HttpGet("balance")]
@@ -30,7 +32,7 @@ public class WalletController : ControllerBase
     [HttpPost("create-order")]
     public async Task<IActionResult> CreateOrder([FromBody] CreateDepositOrderRequest req)
     {
-        var orderId = await _razorpay.CreateOrderAsync(req.AmountPaise);
+        var orderId = await _razorpay.CreateOrderAsync(req.AmountPaise, User.GetPlayerId());
         return Ok(new ApiResponse<object>(true, "Order created", new
         {
             OrderId = orderId,
@@ -60,6 +62,8 @@ public class WalletController : ControllerBase
     [HttpPost("dev-deposit")]
     public async Task<IActionResult> DevDeposit([FromBody] DevDepositRequest req)
     {
+        if (!_env.IsDevelopment())
+            return Forbid();
         var result = await _wallet.DevDepositAsync(User.GetPlayerId(), req.AmountPaise);
         return result.Success ? Ok(result) : BadRequest(result);
     }
