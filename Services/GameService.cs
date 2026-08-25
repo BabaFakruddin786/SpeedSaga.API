@@ -36,8 +36,9 @@ public class GameService : IGameService
     private readonly INotificationService _notifications;
     private readonly IMovePersistenceQueue _moveQueue;
     private readonly TicTacToeStateStore _ttt;
+    private readonly IGamePlayConfigService _playConfig;
 
-    public GameService(ISqlConnectionFactory db, IWalletService wallet, ILevelService level, IHubContext<GameHub> hub, SessionMoveStore moves, INotificationService notifications, IMovePersistenceQueue moveQueue, TicTacToeStateStore ttt)
+    public GameService(ISqlConnectionFactory db, IWalletService wallet, ILevelService level, IHubContext<GameHub> hub, SessionMoveStore moves, INotificationService notifications, IMovePersistenceQueue moveQueue, TicTacToeStateStore ttt, IGamePlayConfigService playConfig)
     {
         _db = db;
         _wallet = wallet;
@@ -47,6 +48,7 @@ public class GameService : IGameService
         _notifications = notifications;
         _moveQueue = moveQueue;
         _ttt = ttt;
+        _playConfig = playConfig;
     }
 
     public async Task<ApiResponse<object>> StartSinglePlayerAsync(Guid playerId, StartSinglePlayerRequest req)
@@ -60,10 +62,20 @@ public class GameService : IGameService
         if (!await _wallet.HasSufficientBalanceAsync(playerId, req.EntryFeePaise))
             return new ApiResponse<object>(false, "Insufficient balance.");
 
-        var rewardPaise = req.RewardMode == "5x" ? req.EntryFeePaise * 5 : req.EntryFeePaise * 3;
-        var timeLimitSecs = ResolveTimeLimit(req.TimeMode, req.RewardMode);
+        var validation = await _playConfig.ValidateSinglePlayerAsync(gameType, req.TimeMode, req.RewardMode, req.EntryFeePaise);
+        if (!validation.Ok)
+            return new ApiResponse<object>(false, validation.Error);
+
+        var cfg = await _playConfig.GetConfigAsync(gameType, "single");
+        var rewardPaise = _playConfig.ComputeRewardPaise(req.EntryFeePaise, req.RewardMode, cfg);
+        var timeLimitSecs = _playConfig.ComputeTimeLimitSecs(req.TimeMode, req.RewardMode, cfg);
         var sessionId = Guid.NewGuid();
-        var gameMode = req.RewardMode == "5x" ? "SinglePlayer5x" : "SinglePlayer3x";
+        var gameMode = req.RewardMode.ToLowerInvariant() switch
+        {
+            "5x" => "SinglePlayer5x",
+            "1x" => "SinglePlayer1x",
+            _ => "SinglePlayer3x"
+        };
 
         int levelId = 0;
         string gridJson;
@@ -135,6 +147,10 @@ public class GameService : IGameService
         var gameType = GameTypes.Normalize(req.GameType);
         if (!GameTypes.IsValid(gameType))
             return new ApiResponse<object>(false, "Unknown game type.");
+
+        var validation = await _playConfig.ValidateFreePlayAsync(gameType, req.TimeMode);
+        if (!validation.Ok)
+            return new ApiResponse<object>(false, validation.Error);
 
         var timeLimitSecs = ParseTimeMode(req.TimeMode);
         var sessionId = Guid.NewGuid();
@@ -357,6 +373,10 @@ public class GameService : IGameService
         if (!await _wallet.HasSufficientBalanceAsync(playerId, req.EntryFeePaise))
             return new ApiResponse<object>(false, "Insufficient balance.");
 
+        var validation = await _playConfig.ValidateTwoPlayerAsync(gameType, req.TimeSecs, req.EntryFeePaise);
+        if (!validation.Ok)
+            return new ApiResponse<object>(false, validation.Error);
+
         await using var cn = _db.CreateConnection();
         await cn.OpenAsync();
         await using var cmd = new SqlCommand("USP_MatchmakingJoin", cn) { CommandType = CommandType.StoredProcedure };
@@ -417,7 +437,8 @@ public class GameService : IGameService
             var waitConn = opponentId.HasValue
                 ? await GetPlayerConnIdAsync(opponentId.Value, sessionId.Value)
                 : null;
-            var rewardPaise = req.EntryFeePaise * 2 * 85 / 100;
+            var tpCfg = await _playConfig.GetConfigAsync(gameType, "two_player");
+            var rewardPaise = _playConfig.ComputeTwoPlayerRewardPaise(req.EntryFeePaise, tpCfg);
             var matchPayload = new
             {
                 SessionId = sessionId,

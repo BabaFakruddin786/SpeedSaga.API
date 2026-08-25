@@ -31,6 +31,8 @@ builder.Services.AddHttpClient("Msg91");
 
 builder.Services.Configure<MessagingOptions>(configuration.GetSection(MessagingOptions.SectionName));
 builder.Services.AddSingleton<GameConnectionTracker>();
+builder.Services.AddMemoryCache();
+builder.Services.AddSingleton<IGamePlayConfigService, GamePlayConfigService>();
 builder.Services.AddScoped<IPromoService, PromoService>();
 builder.Services.AddSingleton<MessageDispatchService>();
 builder.Services.AddSingleton<IMessageDispatchQueue>(sp => sp.GetRequiredService<MessageDispatchService>());

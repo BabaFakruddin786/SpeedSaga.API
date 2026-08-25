@@ -66,7 +66,7 @@ public class CreateDepositOrderRequestValidator : AbstractValidator<CreateDeposi
 public class AllocateLevelRequestValidator : AbstractValidator<AllocateLevelRequest>
 {
     private static readonly HashSet<string> ValidTimeModes = ["1min", "2min", "3min", "4min", "5min"];
-    private static readonly HashSet<string> ValidRewardModes = ["3x", "5x"];
+    private static readonly HashSet<string> ValidRewardModes = ["1x", "3x", "5x"];
 
     public AllocateLevelRequestValidator()
     {
@@ -94,14 +94,10 @@ public class SubmitResultRequestValidator : AbstractValidator<SubmitResultReques
 
 public class JoinMatchRequestValidator : AbstractValidator<JoinMatchRequest>
 {
-    private static readonly HashSet<int> ValidTimeSecs = [60, 120, 180, 240, 300];
-
     public JoinMatchRequestValidator()
     {
         RuleFor(x => x.EntryFeePaise).GreaterThan(0);
-        RuleFor(x => x.TimeSecs)
-            .Must(t => ValidTimeSecs.Contains(t))
-            .WithMessage("TimeSecs must be 60, 120, 180, 240, or 300.");
+        RuleFor(x => x.TimeSecs).GreaterThan(0).LessThanOrEqualTo(3600);
         RuleFor(x => x.SignalRConnId).NotEmpty().MaximumLength(200);
     }
 }
@@ -111,7 +107,7 @@ public class StartSinglePlayerRequestValidator : AbstractValidator<StartSinglePl
     public StartSinglePlayerRequestValidator()
     {
         RuleFor(x => x.TimeMode).NotEmpty();
-        RuleFor(x => x.RewardMode).NotEmpty().Must(r => r is "3x" or "5x");
+        RuleFor(x => x.RewardMode).NotEmpty().Must(r => r is "1x" or "3x" or "5x");
         RuleFor(x => x.EntryFeePaise).GreaterThan(0);
     }
 }
