@@ -3,6 +3,7 @@ using FluentValidation;
 using FluentValidation.AspNetCore;
 using Hangfire;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.IdentityModel.Tokens;
 using SpeedSaga.API.Authorization;
 using SpeedSaga.API.Hubs;
@@ -30,6 +31,7 @@ builder.Services.AddHttpClient("Razorpay");
 builder.Services.AddHttpClient("Msg91");
 
 builder.Services.Configure<MessagingOptions>(configuration.GetSection(MessagingOptions.SectionName));
+builder.Services.Configure<AdminOptions>(configuration.GetSection(AdminOptions.SectionName));
 builder.Services.AddSingleton<GameConnectionTracker>();
 builder.Services.AddMemoryCache();
 builder.Services.AddSingleton<IGamePlayConfigService, GamePlayConfigService>();
@@ -40,7 +42,10 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<MessageDispatchSer
 builder.Services.AddScoped<IOtpService, OtpService>();
 builder.Services.AddScoped<IMessageDeliveryService, MessageDeliveryService>();
 builder.Services.AddScoped<IOutgoingMessageService, OutgoingMessageService>();
+builder.Services.AddSingleton<KycDocumentStorage>();
 builder.Services.AddScoped<IKycVerificationService, KycVerificationService>();
+builder.Services.AddScoped<IKycAdminService, KycAdminService>();
+builder.Services.Configure<FormOptions>(o => o.MultipartBodyLengthLimit = 6_000_000);
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IWalletService, WalletService>();
 builder.Services.AddScoped<ILevelService, LevelService>();
@@ -50,6 +55,9 @@ builder.Services.AddScoped<IRazorpayService, RazorpayService>();
 builder.Services.AddScoped<IBotDetectionService, BotDetectionService>();
 builder.Services.AddScoped<ITournamentService, TournamentService>();
 builder.Services.AddScoped<INotificationService, NotificationService>();
+builder.Services.AddScoped<ISupportService, SupportService>();
+builder.Services.AddScoped<ISupportConfigService, SupportConfigService>();
+builder.Services.AddScoped<ITickerConfigService, TickerConfigService>();
 builder.Services.AddScoped<IThemeService, ThemeService>();
 builder.Services.AddHostedService<PuzzleWarmupService>();
 

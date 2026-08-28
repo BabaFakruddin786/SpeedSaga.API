@@ -14,13 +14,16 @@ public class PlayerController : ControllerBase
     private readonly IPlayerService _player;
     private readonly IKycVerificationService _kycVerify;
     private readonly IOutgoingMessageService _messages;
+    private readonly IOtpService _otp;
     private readonly IWebHostEnvironment _env;
 
-    public PlayerController(IPlayerService player, IKycVerificationService kycVerify, IOutgoingMessageService messages, IWebHostEnvironment env)
+    public PlayerController(IPlayerService player, IKycVerificationService kycVerify, IOutgoingMessageService messages,
+        IOtpService otp, IWebHostEnvironment env)
     {
         _player = player;
         _kycVerify = kycVerify;
         _messages = messages;
+        _otp = otp;
         _env = env;
     }
 
@@ -40,6 +43,32 @@ public class PlayerController : ControllerBase
         return result.Success ? Ok(result) : BadRequest(result);
     }
 
+    [HttpPost("profile/send-otp")]
+    public async Task<IActionResult> SendProfileOtp([FromBody] ProfileOtpSendRequest req)
+    {
+        var contactType = req.ContactType?.Trim().ToLowerInvariant() ?? "";
+        var destination = req.Destination?.Trim() ?? "";
+        if (contactType is not ("email" or "phone"))
+            return BadRequest(new ApiResponse<object>(false, "ContactType must be email or phone"));
+        if (string.IsNullOrWhiteSpace(destination))
+            return BadRequest(new ApiResponse<object>(false, "Destination is required"));
+
+        var channel = contactType == "email" ? MessageChannels.Email : MessageChannels.Sms;
+        if (channel == MessageChannels.Email)
+            destination = destination.ToLowerInvariant();
+
+        var result = await _otp.SendAsync(new OtpSendRequest(
+            User.GetPlayerId(),
+            OtpPurposes.LinkContact,
+            channel,
+            destination,
+            IncludeDevOtpInResponse: _env.IsDevelopment()));
+
+        return result.Success
+            ? Ok(new ApiResponse<object>(true, result.Message, new { refId = result.RefId, devOtp = result.DevOtp }))
+            : BadRequest(new ApiResponse<object>(false, result.Message));
+    }
+
     [HttpPut("appearance")]
     public async Task<IActionResult> SetAppearance([FromBody] SetAppearanceRequest req)
     {
@@ -50,31 +79,27 @@ public class PlayerController : ControllerBase
     [HttpGet("kyc")]
     public async Task<IActionResult> GetKyc() => Ok(await _player.GetKycAsync(User.GetPlayerId()));
 
-    [HttpPost("kyc/aadhaar/otp")]
-    public async Task<IActionResult> SendAadhaarOtp([FromBody] AadhaarOtpSendRequest req)
+    [HttpPost("kyc/aadhaar/submit")]
+    [RequestSizeLimit(6_000_000)]
+    public async Task<IActionResult> SubmitAadhaar([FromForm] string aadhaarNumber, [FromForm] string nameOnAadhaar, IFormFile photo)
     {
-        var result = await _kycVerify.SendAadhaarOtpAsync(User.GetPlayerId(), req.AadhaarNumber);
+        var result = await _kycVerify.SubmitAadhaarAsync(User.GetPlayerId(), aadhaarNumber, nameOnAadhaar, photo);
         return result.Success ? Ok(result) : BadRequest(result);
     }
 
-    [HttpPost("kyc/aadhaar/verify")]
-    public async Task<IActionResult> VerifyAadhaarOtp([FromBody] AadhaarOtpVerifyRequest req)
+    [HttpPost("kyc/pan/submit")]
+    [RequestSizeLimit(6_000_000)]
+    public async Task<IActionResult> SubmitPan([FromForm] string panNumber, [FromForm] IFormFile photo)
     {
-        var result = await _kycVerify.VerifyAadhaarOtpAsync(User.GetPlayerId(), req.RefId, req.Otp);
+        var result = await _kycVerify.SubmitPanAsync(User.GetPlayerId(), panNumber, photo);
         return result.Success ? Ok(result) : BadRequest(result);
     }
 
-    [HttpPost("kyc/pan/verify")]
-    public async Task<IActionResult> VerifyPan([FromBody] PanVerifyRequest req)
+    [HttpPost("kyc/bank/submit")]
+    [RequestSizeLimit(6_000_000)]
+    public async Task<IActionResult> SubmitBank([FromForm] string accountNumber, [FromForm] string ifsc, [FromForm] string holderName, IFormFile photo)
     {
-        var result = await _kycVerify.VerifyPanAsync(User.GetPlayerId(), req.PanNumber);
-        return result.Success ? Ok(result) : BadRequest(result);
-    }
-
-    [HttpPost("kyc/bank/verify")]
-    public async Task<IActionResult> VerifyBank([FromBody] BankVerifyRequest req)
-    {
-        var result = await _kycVerify.VerifyBankAsync(User.GetPlayerId(), req.AccountNumber, req.Ifsc, req.HolderName);
+        var result = await _kycVerify.SubmitBankAsync(User.GetPlayerId(), accountNumber, ifsc, holderName, photo);
         return result.Success ? Ok(result) : BadRequest(result);
     }
 

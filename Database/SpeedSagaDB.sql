@@ -115,6 +115,7 @@ CREATE TABLE GameSessions (
     Player1Id           UNIQUEIDENTIFIER    NOT NULL REFERENCES Players(PlayerId),
     Player2Id           UNIQUEIDENTIFIER    NULL REFERENCES Players(PlayerId),
     GameMode            NVARCHAR(30)        NOT NULL,   -- 'FreePlay','SinglePlayer3x','SinglePlayer5x','TwoPlayer'
+    GameType            NVARCHAR(30)        NOT NULL DEFAULT 'arrow',  -- 'arrow','car_parking','tic_tac_toe'
     RewardMode          NVARCHAR(10)        NULL,       -- '3x','5x','85pct'
     EntryFeePaise       BIGINT              DEFAULT 0,
     RewardPaise         BIGINT              DEFAULT 0,
@@ -199,6 +200,7 @@ CREATE TABLE MatchmakingQueue (
     PlayerId        UNIQUEIDENTIFIER    NOT NULL REFERENCES Players(PlayerId),
     EntryFeePaise   BIGINT              NOT NULL,
     TimeLimitSecs   INT                 NOT NULL,
+    GameType        NVARCHAR(30)        NOT NULL DEFAULT 'arrow',
     SignalRConnId   NVARCHAR(200)       NULL,
     Status          NVARCHAR(20)        DEFAULT 'Waiting',  -- Waiting|Matched|Cancelled|Expired
     JoinedAt        DATETIME            DEFAULT GETDATE(),
@@ -641,21 +643,23 @@ CREATE OR ALTER PROCEDURE USP_MatchmakingJoin
     @FeePaise       BIGINT,
     @TimeSecs       INT,
     @ConnId         NVARCHAR(200),
+    @GameType       NVARCHAR(30) = N'arrow',
     @SessionId      UNIQUEIDENTIFIER    OUTPUT,
     @IsNewSession   BIT                 OUTPUT,
     @OpponentId     UNIQUEIDENTIFIER    OUTPUT
 AS
 BEGIN
     SET NOCOUNT ON;
-    SET @IsNewSession = 0; SET @OpponentId = NULL;
+    SET @IsNewSession = 0; SET @OpponentId = NULL; SET @SessionId = NULL;
+    IF @GameType IS NULL OR LTRIM(RTRIM(@GameType)) = N'' SET @GameType = N'arrow';
 
     BEGIN TRANSACTION;
     BEGIN TRY
-        -- Look for waiting opponent with same fee and time
+        -- Look for waiting opponent with same fee, time, and game type
         DECLARE @WaitId UNIQUEIDENTIFIER, @WaitPlayerId UNIQUEIDENTIFIER;
         SELECT TOP 1 @WaitId = QueueId, @WaitPlayerId = PlayerId
         FROM MatchmakingQueue WITH (UPDLOCK, ROWLOCK)
-        WHERE EntryFeePaise = @FeePaise AND TimeLimitSecs = @TimeSecs
+        WHERE EntryFeePaise = @FeePaise AND TimeLimitSecs = @TimeSecs AND GameType = @GameType
           AND Status = 'Waiting' AND PlayerId <> @PlayerId
           AND DATEDIFF(SECOND, JoinedAt, GETDATE()) < 60
         ORDER BY JoinedAt;
@@ -666,9 +670,9 @@ BEGIN
             SET @SessionId = NEWID();
             SET @OpponentId = @WaitPlayerId;
 
-            INSERT INTO GameSessions (SessionId, Player1Id, Player2Id, GameMode, EntryFeePaise,
+            INSERT INTO GameSessions (SessionId, Player1Id, Player2Id, GameMode, GameType, EntryFeePaise,
                 RewardPaise, TimeLimitSecs, Status, StartedAt, SignalRGroupId)
-            VALUES (@SessionId, @WaitPlayerId, @PlayerId, 'TwoPlayer',
+            VALUES (@SessionId, @WaitPlayerId, @PlayerId, 'TwoPlayer', @GameType,
                 @FeePaise, CAST(@FeePaise * 2 * 0.85 AS BIGINT), @TimeSecs,
                 'Active', GETDATE(), CAST(@SessionId AS NVARCHAR(50)));
 
@@ -677,15 +681,15 @@ BEGIN
             WHERE QueueId = @WaitId;
 
             -- Add current player to matched state
-            INSERT INTO MatchmakingQueue (PlayerId, EntryFeePaise, TimeLimitSecs, SignalRConnId, Status, MatchedAt, MatchedSessionId)
-            VALUES (@PlayerId, @FeePaise, @TimeSecs, @ConnId, 'Matched', GETDATE(), @SessionId);
+            INSERT INTO MatchmakingQueue (PlayerId, EntryFeePaise, TimeLimitSecs, SignalRConnId, GameType, Status, MatchedAt, MatchedSessionId)
+            VALUES (@PlayerId, @FeePaise, @TimeSecs, @ConnId, @GameType, 'Matched', GETDATE(), @SessionId);
         END
         ELSE
         BEGIN
             -- No match — add to queue
             SET @IsNewSession = 1;
-            INSERT INTO MatchmakingQueue (PlayerId, EntryFeePaise, TimeLimitSecs, SignalRConnId, Status)
-            VALUES (@PlayerId, @FeePaise, @TimeSecs, @ConnId, 'Waiting');
+            INSERT INTO MatchmakingQueue (PlayerId, EntryFeePaise, TimeLimitSecs, SignalRConnId, GameType, Status)
+            VALUES (@PlayerId, @FeePaise, @TimeSecs, @ConnId, @GameType, 'Waiting');
         END
 
         COMMIT;

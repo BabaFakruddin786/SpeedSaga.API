@@ -50,7 +50,15 @@ public record ResetPasswordRequest(string Contact, string ResetCode, string NewP
 
 public record WithdrawRequest(long AmountPaise);
 
-public record UpdateProfileRequest(string? Username, string? StateCode, string? ContactEmail = null, string? ContactPhone = null);
+public record UpdateProfileRequest(
+    string? Username,
+    string? StateCode,
+    string? ContactEmail = null,
+    string? ContactPhone = null,
+    string? OtpRefId = null,
+    string? OtpCode = null);
+
+public record ProfileOtpSendRequest(string ContactType, string Destination);
 public record SetAppearanceRequest(string AppearanceMode);
 
 public record KycSubmitRequest(string DocType, string DocNumber, string? HolderName);
@@ -66,6 +74,8 @@ public record BankVerifyRequest(string AccountNumber, string Ifsc, string Holder
 public record DevDepositRequest(long AmountPaise);
 
 public record SyncMoveRequest(string SessionId, string Direction, int Col, int Row, float Timestamp);
+
+public record SupportMessageRequest(string Message);
 
 public record AllocatedLevelResult(int LevelId, string GridJson, string PuzzleTier = "Easy", int TargetArrows = 30, int GridCols = 0, int GridRows = 0);
 

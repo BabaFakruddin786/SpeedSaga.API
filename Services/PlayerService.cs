@@ -19,11 +19,13 @@ public class PlayerService : IPlayerService
 {
     private readonly ISqlConnectionFactory _db;
     private readonly IWebHostEnvironment _env;
+    private readonly IOtpService _otp;
 
-    public PlayerService(ISqlConnectionFactory db, IWebHostEnvironment env)
+    public PlayerService(ISqlConnectionFactory db, IWebHostEnvironment env, IOtpService otp)
     {
         _db = db;
         _env = env;
+        _otp = otp;
     }
 
     public async Task<object?> GetDashboardAsync(Guid playerId)
@@ -85,9 +87,43 @@ public class PlayerService : IPlayerService
 
     public async Task<ApiResponse<object>> UpdateProfileAsync(Guid playerId, UpdateProfileRequest req)
     {
-        await using var cn = _db.CreateConnection();
-        await cn.OpenAsync();
-        await using var cmd = new SqlCommand("USP_UpdatePlayerProfile", cn) { CommandType = CommandType.StoredProcedure };
+        string? curEmail = null, curPhone = null;
+        await using (var cn = _db.CreateConnection())
+        {
+            await cn.OpenAsync();
+            await using var lookup = new SqlCommand("SELECT ContactEmail, ContactPhone FROM Players WHERE PlayerId = @PlayerId", cn);
+            lookup.Parameters.AddWithValue("@PlayerId", playerId);
+            await using var rdr = await lookup.ExecuteReaderAsync();
+            if (await rdr.ReadAsync())
+            {
+                curEmail = rdr["ContactEmail"] == DBNull.Value ? null : rdr["ContactEmail"]?.ToString();
+                curPhone = rdr["ContactPhone"] == DBNull.Value ? null : rdr["ContactPhone"]?.ToString();
+            }
+        }
+
+        var linkEmail = !string.IsNullOrWhiteSpace(req.ContactEmail) && string.IsNullOrEmpty(curEmail);
+        var linkPhone = !string.IsNullOrWhiteSpace(req.ContactPhone) && string.IsNullOrEmpty(curPhone);
+        if (linkEmail || linkPhone)
+        {
+            if (string.IsNullOrWhiteSpace(req.OtpRefId) || string.IsNullOrWhiteSpace(req.OtpCode))
+                return new ApiResponse<object>(false, "OTP verification is required to link a new email or phone number");
+
+            var destination = linkEmail
+                ? req.ContactEmail!.Trim().ToLowerInvariant()
+                : req.ContactPhone!.Trim();
+            var verify = await _otp.VerifyAsync(new OtpVerifyRequest(
+                req.OtpCode,
+                req.OtpRefId,
+                playerId,
+                destination,
+                OtpPurposes.LinkContact));
+            if (!verify.Success)
+                return new ApiResponse<object>(false, verify.Message);
+        }
+
+        await using var cn2 = _db.CreateConnection();
+        await cn2.OpenAsync();
+        await using var cmd = new SqlCommand("USP_UpdatePlayerProfile", cn2) { CommandType = CommandType.StoredProcedure };
         cmd.Parameters.AddWithValue("@PlayerId", playerId);
         cmd.Parameters.AddWithValue("@Username", (object?)req.Username?.Trim() ?? DBNull.Value);
         cmd.Parameters.AddWithValue("@StateCode", (object?)req.StateCode?.Trim() ?? DBNull.Value);
@@ -121,8 +157,25 @@ public class PlayerService : IPlayerService
             IsFullyVerified = (bool)rdr["IsFullyVerified"],
             AadhaarMasked = rdr["AadhaarMasked"]?.ToString(),
             PANMasked = rdr["PANMasked"]?.ToString(),
-            BankMasked = rdr["BankMasked"]?.ToString()
+            BankMasked = rdr["BankMasked"]?.ToString(),
+            AadhaarNameOnCard = rdr["AadhaarNameOnCard"]?.ToString(),
+            AadhaarRejectReason = ColumnOrNull(rdr, "AadhaarRejectReason"),
+            PanRejectReason = ColumnOrNull(rdr, "PanRejectReason"),
+            BankRejectReason = ColumnOrNull(rdr, "BankRejectReason")
         };
+    }
+
+    static string? ColumnOrNull(SqlDataReader rdr, string col)
+    {
+        try
+        {
+            var ord = rdr.GetOrdinal(col);
+            return rdr.IsDBNull(ord) ? null : rdr.GetString(ord);
+        }
+        catch (IndexOutOfRangeException)
+        {
+            return null;
+        }
     }
 
     public async Task<ApiResponse<object>> SubmitKycAsync(Guid playerId, KycSubmitRequest req)
@@ -166,10 +219,12 @@ public class PlayerService : IPlayerService
         await cn.OpenAsync();
         await using var cmd = new SqlCommand(@"
             UPDATE K SET
-                AadhaarStatus = CASE WHEN K.AadhaarStatus IN ('NotSubmitted','Pending') THEN 'Verified' ELSE K.AadhaarStatus END,
-                PANStatus = CASE WHEN K.PANStatus IN ('NotSubmitted','Pending') THEN 'Verified' ELSE K.PANStatus END,
-                BankStatus = CASE WHEN K.BankStatus IN ('NotSubmitted','Pending') THEN 'Verified' ELSE K.BankStatus END,
-                IsFullyVerified = 1,
+                AadhaarStatus = CASE WHEN K.AadhaarNumber IS NOT NULL THEN 'Approved' ELSE K.AadhaarStatus END,
+                PANStatus = CASE WHEN K.PANNumber IS NOT NULL THEN 'Approved' ELSE K.PANStatus END,
+                BankStatus = CASE WHEN K.BankAccount IS NOT NULL THEN 'Approved' ELSE K.BankStatus END,
+                IsFullyVerified = CASE
+                    WHEN K.AadhaarNumber IS NOT NULL AND K.PANNumber IS NOT NULL AND K.BankAccount IS NOT NULL THEN 1
+                    ELSE 0 END,
                 UpdatedAt = GETDATE()
             FROM PlayerKYC K
             WHERE K.PlayerId = @PlayerId", cn);

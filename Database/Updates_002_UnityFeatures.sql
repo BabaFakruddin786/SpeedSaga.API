@@ -116,7 +116,8 @@ BEGIN
     DECLARE @Offset INT = (@PageNo - 1) * @PageSize;
     SELECT NotifId, Title, Body, NotifType, IsRead, CreatedAt
     FROM Notifications
-    WHERE PlayerId = @PlayerId OR PlayerId IS NULL
+    WHERE (PlayerId = @PlayerId OR PlayerId IS NULL)
+      AND (ISNULL(LTRIM(RTRIM(Title)), '') <> '' OR ISNULL(LTRIM(RTRIM(Body)), '') <> '')
     ORDER BY CreatedAt DESC
     OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
 END

@@ -1,5 +1,4 @@
 using System.Data;
-using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.Data.SqlClient;
 using SpeedSaga.API.Infrastructure;
@@ -9,99 +8,97 @@ namespace SpeedSaga.API.Services;
 
 public interface IKycVerificationService
 {
-    Task<ApiResponse<object>> SendAadhaarOtpAsync(Guid playerId, string aadhaar);
-    Task<ApiResponse<object>> VerifyAadhaarOtpAsync(Guid playerId, string refId, string otp);
-    Task<ApiResponse<object>> VerifyPanAsync(Guid playerId, string pan);
-    Task<ApiResponse<object>> VerifyBankAsync(Guid playerId, string account, string ifsc, string holderName);
+    Task<ApiResponse<object>> SubmitAadhaarAsync(Guid playerId, string aadhaar, string nameOnAadhaar, IFormFile photo);
+    Task<ApiResponse<object>> SubmitPanAsync(Guid playerId, string pan, IFormFile photo);
+    Task<ApiResponse<object>> SubmitBankAsync(Guid playerId, string account, string ifsc, string holderName, IFormFile? photo);
 }
 
 public class KycVerificationService : IKycVerificationService
 {
+    const long MaxPhotoBytes = 5_000_000;
+
     readonly ISqlConnectionFactory _db;
-    readonly IOtpService _otp;
+    readonly KycDocumentStorage _storage;
     readonly IWebHostEnvironment _env;
 
-    public KycVerificationService(ISqlConnectionFactory db, IOtpService otp, IWebHostEnvironment env)
+    public KycVerificationService(ISqlConnectionFactory db, KycDocumentStorage storage, IWebHostEnvironment env)
     {
         _db = db;
-        _otp = otp;
+        _storage = storage;
         _env = env;
     }
 
-    public async Task<ApiResponse<object>> SendAadhaarOtpAsync(Guid playerId, string aadhaar)
+    public async Task<ApiResponse<object>> SubmitAadhaarAsync(Guid playerId, string aadhaar, string nameOnAadhaar, IFormFile photo)
     {
         aadhaar = aadhaar?.Trim() ?? "";
+        nameOnAadhaar = nameOnAadhaar?.Trim() ?? "";
         if (!Regex.IsMatch(aadhaar, @"^\d{12}$"))
             return new ApiResponse<object>(false, "Aadhaar must be exactly 12 digits");
+        if (string.IsNullOrWhiteSpace(nameOnAadhaar))
+            return new ApiResponse<object>(false, "Enter the name printed on your Aadhaar card");
+        if (photo == null || photo.Length == 0)
+            return new ApiResponse<object>(false, "Upload a photo of your Aadhaar card");
+        if (photo.Length > MaxPhotoBytes)
+            return new ApiResponse<object>(false, "Photo must be 5 MB or smaller");
 
-        var phone = await GetPlayerPhoneAsync(playerId);
-        if (string.IsNullOrWhiteSpace(phone))
-            return new ApiResponse<object>(false, "Add a mobile number to your account before Aadhaar verification");
+        var profileName = await GetUsernameAsync(playerId);
+        if (string.IsNullOrWhiteSpace(profileName))
+            return new ApiResponse<object>(false, "Save your full name (as on Aadhaar) in Personal Data first");
+        if (!KycNameMatcher.NamesMatch(nameOnAadhaar, profileName))
+            return new ApiResponse<object>(false, "Name on Aadhaar must match your profile full name");
 
-        var maskedAadhaar = $"XXXX-XXXX-{aadhaar[^4..]}";
-        var context = JsonSerializer.Serialize(new { aadhaarMasked = maskedAadhaar, aadhaarLast4 = aadhaar[^4..] });
-
-        var result = await _otp.SendAsync(new OtpSendRequest(
-            playerId,
-            OtpPurposes.KycAadhaar,
-            MessageChannels.Sms,
-            phone,
-            context,
-            IncludeDevOtpInResponse: true));
-
-        if (!result.Success)
-            return new ApiResponse<object>(false, result.Message, new { retryAfterSeconds = result.RetryAfterSeconds });
-
-        var data = new Dictionary<string, object?> { ["refId"] = result.RefId };
-        if (!string.IsNullOrEmpty(result.DevOtp))
-            data["devOtp"] = result.DevOtp;
-
-        return new ApiResponse<object>(true, result.Message, data);
-    }
-
-    public async Task<ApiResponse<object>> VerifyAadhaarOtpAsync(Guid playerId, string refId, string otp)
-    {
-        var result = await _otp.VerifyAsync(new OtpVerifyRequest(otp, refId, playerId, Purpose: OtpPurposes.KycAadhaar));
-        if (!result.Success)
-            return new ApiResponse<object>(false, result.Message);
-
-        string masked = "XXXX-XXXX-****";
-        if (!string.IsNullOrWhiteSpace(result.ContextJson))
+        string docPath;
+        try
         {
-            try
-            {
-                using var doc = JsonDocument.Parse(result.ContextJson);
-                if (doc.RootElement.TryGetProperty("aadhaarMasked", out var el))
-                    masked = el.GetString() ?? masked;
-            }
-            catch { /* use default */ }
+            await using var stream = photo.OpenReadStream();
+            docPath = await _storage.SaveAsync(playerId, "aadhaar", stream, photo.FileName);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return new ApiResponse<object>(false, ex.Message);
         }
 
-        await SetKycDocumentAsync(playerId, "Aadhaar", masked, null, null, "Verified");
-        return new ApiResponse<object>(true, "Aadhaar verified successfully");
+        var masked = $"XXXX-XXXX-{aadhaar[^4..]}";
+        await SetKycDocumentAsync(playerId, "Aadhaar", masked, null, null, "PendingReview", nameOnAadhaar, docPath);
+        return new ApiResponse<object>(true, "Aadhaar submitted for review. This is not government e-KYC.");
     }
 
-    public async Task<ApiResponse<object>> VerifyPanAsync(Guid playerId, string pan)
+    public async Task<ApiResponse<object>> SubmitPanAsync(Guid playerId, string pan, IFormFile photo)
     {
         pan = pan?.Trim().ToUpperInvariant() ?? "";
         if (!Regex.IsMatch(pan, @"^[A-Z]{5}\d{4}[A-Z]$"))
             return new ApiResponse<object>(false, "PAN format must be ABCDE1234F");
+        if (photo == null || photo.Length == 0)
+            return new ApiResponse<object>(false, "Upload a photo of your PAN card");
+        if (photo.Length > MaxPhotoBytes)
+            return new ApiResponse<object>(false, "Photo must be 5 MB or smaller");
 
-        var username = await GetUsernameAsync(playerId);
-        if (string.IsNullOrWhiteSpace(username))
-            return new ApiResponse<object>(false, "Set your display name in Personal Data before verifying PAN");
+        var profileName = await GetUsernameAsync(playerId);
+        if (string.IsNullOrWhiteSpace(profileName))
+            return new ApiResponse<object>(false, "Save your full name in Personal Data before submitting PAN");
 
-        var expectedInitial = char.ToUpperInvariant(username.Trim()[0]);
-        var panInitial = pan[3];
-        if (panInitial != expectedInitial && !_env.IsDevelopment())
-            return new ApiResponse<object>(false, "PAN does not match your profile name. Use the PAN registered in your name.");
+        var aadhaarName = await GetAadhaarNameOnCardAsync(playerId);
+        var nameForPan = !string.IsNullOrWhiteSpace(aadhaarName) ? aadhaarName : profileName;
+        if (!KycNameMatcher.PanMatchesHolderInitial(pan, nameForPan) && !_env.IsDevelopment())
+            return new ApiResponse<object>(false, "PAN holder initial does not match your profile / Aadhaar name");
+
+        string docPath;
+        try
+        {
+            await using var stream = photo.OpenReadStream();
+            docPath = await _storage.SaveAsync(playerId, "pan", stream, photo.FileName);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return new ApiResponse<object>(false, ex.Message);
+        }
 
         var masked = $"{pan[..4]}****{pan[^1]}";
-        await SetKycDocumentAsync(playerId, "PAN", masked, username, null, "Verified");
-        return new ApiResponse<object>(true, "PAN verified and linked to your profile");
+        await SetKycDocumentAsync(playerId, "PAN", masked, null, null, "PendingReview", null, docPath);
+        return new ApiResponse<object>(true, "PAN submitted for review");
     }
 
-    public async Task<ApiResponse<object>> VerifyBankAsync(Guid playerId, string account, string ifsc, string holderName)
+    public async Task<ApiResponse<object>> SubmitBankAsync(Guid playerId, string account, string ifsc, string holderName, IFormFile? photo)
     {
         account = account?.Trim() ?? "";
         ifsc = ifsc?.Trim().ToUpperInvariant() ?? "";
@@ -111,37 +108,37 @@ public class KycVerificationService : IKycVerificationService
             return new ApiResponse<object>(false, "Bank account must be 9 to 18 digits");
         if (!Regex.IsMatch(ifsc, @"^[A-Z]{4}0[A-Z0-9]{6}$"))
             return new ApiResponse<object>(false, "IFSC format must be e.g. SBIN0001234");
+        if (string.IsNullOrWhiteSpace(holderName))
+            return new ApiResponse<object>(false, "Enter the account holder name");
+        if (photo == null || photo.Length == 0)
+            return new ApiResponse<object>(false, "Upload a photo of your passbook or cancelled cheque");
+        if (photo.Length > MaxPhotoBytes)
+            return new ApiResponse<object>(false, "Photo must be 5 MB or smaller");
 
-        var username = await GetUsernameAsync(playerId);
-        if (string.IsNullOrWhiteSpace(username))
-            return new ApiResponse<object>(false, "Set your display name in Personal Data before verifying bank account");
+        var profileName = await GetUsernameAsync(playerId);
+        if (string.IsNullOrWhiteSpace(profileName))
+            return new ApiResponse<object>(false, "Save your full name in Personal Data first");
+        if (!KycNameMatcher.NamesMatch(holderName, profileName))
+            return new ApiResponse<object>(false, "Account holder name must match your profile name");
 
-        if (!NamesMatch(holderName, username))
-            return new ApiResponse<object>(false, "Account holder name must match your profile display name");
+        var aadhaarName = await GetAadhaarNameOnCardAsync(playerId);
+        if (!string.IsNullOrWhiteSpace(aadhaarName) && !KycNameMatcher.NamesMatch(holderName, aadhaarName))
+            return new ApiResponse<object>(false, "Account holder name must match the name on your Aadhaar");
+
+        string docPath;
+        try
+        {
+            await using var stream = photo.OpenReadStream();
+            docPath = await _storage.SaveAsync(playerId, "bank", stream, photo.FileName);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return new ApiResponse<object>(false, ex.Message);
+        }
 
         var masked = $"XXXX{account[^4..]}";
-        await SetKycDocumentAsync(playerId, "Bank", masked, holderName, ifsc, "Verified");
-        return new ApiResponse<object>(true, "Bank account verified (penny-drop simulated in sandbox)");
-    }
-
-    static bool NamesMatch(string holder, string profileName)
-    {
-        holder = holder.Trim();
-        profileName = profileName.Trim();
-        if (holder.Equals(profileName, StringComparison.OrdinalIgnoreCase)) return true;
-        var holderFirst = holder.Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? holder;
-        var profileFirst = profileName.Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? profileName;
-        return holderFirst.Equals(profileFirst, StringComparison.OrdinalIgnoreCase);
-    }
-
-    async Task<string?> GetPlayerPhoneAsync(Guid playerId)
-    {
-        await using var cn = _db.CreateConnection();
-        await cn.OpenAsync();
-        await using var cmd = new SqlCommand("SELECT ContactPhone FROM Players WHERE PlayerId = @PlayerId", cn);
-        cmd.Parameters.AddWithValue("@PlayerId", playerId);
-        var result = await cmd.ExecuteScalarAsync();
-        return result == DBNull.Value || result == null ? null : result.ToString();
+        await SetKycDocumentAsync(playerId, "Bank", masked, holderName, ifsc, "PendingReview", null, docPath);
+        return new ApiResponse<object>(true, "Bank details submitted for review");
     }
 
     async Task<string?> GetUsernameAsync(Guid playerId)
@@ -154,7 +151,18 @@ public class KycVerificationService : IKycVerificationService
         return result == DBNull.Value || result == null ? null : result.ToString();
     }
 
-    async Task SetKycDocumentAsync(Guid playerId, string docType, string docNumber, string? holderName, string? ifsc, string status)
+    async Task<string?> GetAadhaarNameOnCardAsync(Guid playerId)
+    {
+        await using var cn = _db.CreateConnection();
+        await cn.OpenAsync();
+        await using var cmd = new SqlCommand("SELECT AadhaarNameOnCard FROM PlayerKYC WHERE PlayerId = @PlayerId", cn);
+        cmd.Parameters.AddWithValue("@PlayerId", playerId);
+        var result = await cmd.ExecuteScalarAsync();
+        return result == DBNull.Value || result == null ? null : result.ToString();
+    }
+
+    async Task SetKycDocumentAsync(Guid playerId, string docType, string docNumber, string? holderName,
+        string? ifsc, string status, string? nameOnAadhaar, string? docPath)
     {
         await using var cn = _db.CreateConnection();
         await cn.OpenAsync();
@@ -165,6 +173,9 @@ public class KycVerificationService : IKycVerificationService
         cmd.Parameters.AddWithValue("@HolderName", (object?)holderName ?? DBNull.Value);
         cmd.Parameters.AddWithValue("@Ifsc", (object?)ifsc ?? DBNull.Value);
         cmd.Parameters.AddWithValue("@Status", status);
+        cmd.Parameters.AddWithValue("@NameOnAadhaar", (object?)nameOnAadhaar ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@DocPath", (object?)docPath ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@RejectReason", DBNull.Value);
         await cmd.ExecuteNonQueryAsync();
     }
 }

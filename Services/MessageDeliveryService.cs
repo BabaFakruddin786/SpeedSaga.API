@@ -109,6 +109,7 @@ public class MessageDeliveryService : IMessageDeliveryService
         {
             OtpPurposes.PasswordReset => "SpeedSaga password reset code",
             OtpPurposes.KycAadhaar => "SpeedSaga Aadhaar verification OTP",
+            OtpPurposes.LinkContact => "SpeedSaga contact verification OTP",
             _ => "SpeedSaga verification code"
         };
         var body = plainOtp != null

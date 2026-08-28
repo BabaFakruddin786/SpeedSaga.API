@@ -43,6 +43,7 @@ public static class OtpPurposes
 {
     public const string KycAadhaar = "KycAadhaar";
     public const string PasswordReset = "PasswordReset";
+    public const string LinkContact = "LinkContact";
 }
 
 public static class MessageChannels
