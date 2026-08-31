@@ -13,13 +13,13 @@ namespace SpeedSaga.API.Controllers;
 public class RazorpayWebhookController : ControllerBase
 {
     private readonly IWalletService _wallet;
-    private readonly IConfiguration _configuration;
+    private readonly IPaymentConfigService _paymentConfig;
     private readonly ILogger<RazorpayWebhookController> _logger;
 
-    public RazorpayWebhookController(IWalletService wallet, IConfiguration configuration, ILogger<RazorpayWebhookController> logger)
+    public RazorpayWebhookController(IWalletService wallet, IPaymentConfigService paymentConfig, ILogger<RazorpayWebhookController> logger)
     {
         _wallet = wallet;
-        _configuration = configuration;
+        _paymentConfig = paymentConfig;
         _logger = logger;
     }
 
@@ -27,7 +27,8 @@ public class RazorpayWebhookController : ControllerBase
     [AllowAnonymous]
     public async Task<IActionResult> HandleRazorpayWebhook()
     {
-        var secret = _configuration["Razorpay:WebhookSecret"];
+        var secrets = await _paymentConfig.GetSecretsAsync();
+        var secret = secrets.WebhookSecret;
         if (string.IsNullOrWhiteSpace(secret))
         {
             _logger.LogWarning("Razorpay webhook received but WebhookSecret is not configured.");

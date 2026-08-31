@@ -30,6 +30,7 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<MovePersistenceSer
 builder.Services.AddHostedService<SessionMoveStoreCleanup>();
 builder.Services.AddHttpClient("Razorpay");
 builder.Services.AddHttpClient("Msg91");
+builder.Services.AddHttpClient("Fcm");
 
 builder.Services.Configure<MessagingOptions>(configuration.GetSection(MessagingOptions.SectionName));
 builder.Services.Configure<AdminOptions>(configuration.GetSection(AdminOptions.SectionName));
@@ -50,6 +51,10 @@ builder.Services.AddScoped<IAdminDashboardService, AdminDashboardService>();
 builder.Services.AddScoped<IAdminFinanceService, AdminFinanceService>();
 builder.Services.AddScoped<IAdminPlayerService, AdminPlayerService>();
 builder.Services.AddScoped<IAdminAuthService, AdminAuthService>();
+builder.Services.AddScoped<IPaymentConfigService, PaymentConfigService>();
+builder.Services.AddScoped<IAdminThemeService, AdminThemeService>();
+builder.Services.AddScoped<IAdminNotificationService, AdminNotificationService>();
+builder.Services.AddScoped<IFcmPushService, FcmPushService>();
 builder.Services.AddHostedService<AdminUserSeedService>();
 builder.Services.Configure<FormOptions>(o => o.MultipartBodyLengthLimit = 6_000_000);
 builder.Services.AddScoped<IAuthService, AuthService>();

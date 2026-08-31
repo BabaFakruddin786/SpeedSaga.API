@@ -1,6 +1,7 @@
 using System.Data;
 using Microsoft.Data.SqlClient;
 using SpeedSaga.API.Infrastructure;
+using SpeedSaga.API.Models;
 
 namespace SpeedSaga.API.Services;
 
@@ -9,6 +10,8 @@ public interface IAdminFinanceService
     Task<IReadOnlyList<object>> ListTransactionsAsync(string? txnType, Guid? playerId, DateTime? from, DateTime? to, int page, CancellationToken ct = default);
     Task<IReadOnlyList<object>> TopDepositorsAsync(int days, int topN, CancellationToken ct = default);
     Task<IReadOnlyList<object>> PlayerFinanceDailyAsync(Guid playerId, int days, CancellationToken ct = default);
+    Task<IReadOnlyList<object>> ListPendingWithdrawalsAsync(int page, CancellationToken ct = default);
+    Task<ApiResponse<object>> ProcessWithdrawalAsync(Guid txnId, string action, string? gatewayRef, string? remarks, CancellationToken ct = default);
 }
 
 public class AdminFinanceService : IAdminFinanceService
@@ -98,5 +101,57 @@ public class AdminFinanceService : IAdminFinanceService
             });
         }
         return list;
+    }
+
+    public async Task<IReadOnlyList<object>> ListPendingWithdrawalsAsync(int page, CancellationToken ct = default)
+    {
+        await using var cn = _db.CreateConnection();
+        await cn.OpenAsync(ct);
+        await using var cmd = new SqlCommand("USP_AdminListPendingWithdrawals", cn) { CommandType = CommandType.StoredProcedure };
+        cmd.Parameters.AddWithValue("@PageNo", page < 1 ? 1 : page);
+        cmd.Parameters.AddWithValue("@PageSize", 50);
+        var list = new List<object>();
+        await using var rdr = await cmd.ExecuteReaderAsync(ct);
+        while (await rdr.ReadAsync(ct))
+        {
+            list.Add(new
+            {
+                txnId = rdr["TxnId"].ToString(),
+                playerId = rdr["PlayerId"].ToString(),
+                username = rdr["Username"]?.ToString(),
+                contactEmail = rdr["ContactEmail"]?.ToString(),
+                contactPhone = rdr["ContactPhone"]?.ToString(),
+                amountPaise = (long)rdr["AmountPaise"],
+                balanceAfter = (long)rdr["BalanceAfter"],
+                status = rdr["Status"].ToString(),
+                remarks = rdr["Remarks"]?.ToString(),
+                createdAt = (DateTime)rdr["CreatedAt"],
+                bankHolder = rdr["BankHolder"]?.ToString(),
+                bankAccount = rdr["BankAccount"]?.ToString(),
+                bankIfsc = rdr["BankIfsc"]?.ToString()
+            });
+        }
+        return list;
+    }
+
+    public async Task<ApiResponse<object>> ProcessWithdrawalAsync(Guid txnId, string action, string? gatewayRef, string? remarks, CancellationToken ct = default)
+    {
+        await using var cn = _db.CreateConnection();
+        await cn.OpenAsync(ct);
+        await using var cmd = new SqlCommand("USP_AdminProcessWithdrawal", cn) { CommandType = CommandType.StoredProcedure };
+        cmd.Parameters.AddWithValue("@TxnId", txnId);
+        cmd.Parameters.AddWithValue("@Action", action);
+        cmd.Parameters.AddWithValue("@GatewayRef", (object?)gatewayRef ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@Remarks", (object?)remarks ?? DBNull.Value);
+        var resultParam = cmd.Parameters.Add("@Result", SqlDbType.Int);
+        resultParam.Direction = ParameterDirection.Output;
+        var messageParam = cmd.Parameters.Add("@Message", SqlDbType.NVarChar, 200);
+        messageParam.Direction = ParameterDirection.Output;
+        await cmd.ExecuteNonQueryAsync(ct);
+        var code = (int)resultParam.Value;
+        var message = messageParam.Value?.ToString() ?? "";
+        return code == 0
+            ? new ApiResponse<object>(true, message)
+            : new ApiResponse<object>(false, message);
     }
 }

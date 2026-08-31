@@ -25,4 +25,13 @@ public class NotificationsController : ControllerBase
         await _notifications.MarkReadAsync(User.GetPlayerId(), notifId);
         return Ok(new ApiResponse<object>(true, "Notification marked as read."));
     }
+
+    [HttpPost("device-token")]
+    public async Task<IActionResult> RegisterDeviceToken([FromBody] RegisterDeviceTokenRequest req)
+    {
+        await _notifications.RegisterDeviceTokenAsync(User.GetPlayerId(), req.DeviceToken, req.Platform);
+        return Ok(new ApiResponse<object>(true, "Device token registered."));
+    }
 }
+
+public record RegisterDeviceTokenRequest(string DeviceToken, string Platform);

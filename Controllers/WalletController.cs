@@ -33,11 +33,12 @@ public class WalletController : ControllerBase
     public async Task<IActionResult> CreateOrder([FromBody] CreateDepositOrderRequest req)
     {
         var orderId = await _razorpay.CreateOrderAsync(req.AmountPaise, User.GetPlayerId());
+        var keyId = await _razorpay.GetKeyIdAsync();
         return Ok(new ApiResponse<object>(true, "Order created", new
         {
             OrderId = orderId,
             AmountPaise = req.AmountPaise,
-            KeyId = _razorpay.GetKeyId()
+            KeyId = keyId
         }));
     }
 

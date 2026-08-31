@@ -53,4 +53,21 @@ public class AdminFinanceController : ControllerBase
         if (RequireSuperAdmin() is { } denied) return denied;
         return Ok(await _finance.PlayerFinanceDailyAsync(playerId, days));
     }
+
+    [HttpGet("withdrawals/pending")]
+    public async Task<IActionResult> PendingWithdrawals([FromQuery] int page = 1, CancellationToken ct = default)
+    {
+        if (RequireSuperAdmin() is { } denied) return denied;
+        return Ok(await _finance.ListPendingWithdrawalsAsync(page, ct));
+    }
+
+    [HttpPost("withdrawals/{txnId:guid}/process")]
+    public async Task<IActionResult> ProcessWithdrawal(Guid txnId, [FromBody] ProcessWithdrawalRequest req, CancellationToken ct = default)
+    {
+        if (RequireSuperAdmin() is { } denied) return denied;
+        var result = await _finance.ProcessWithdrawalAsync(txnId, req.Action, req.GatewayRef, req.Remarks, ct);
+        return result.Success ? Ok(result) : BadRequest(result);
+    }
 }
+
+public record ProcessWithdrawalRequest(string Action, string? GatewayRef, string? Remarks);

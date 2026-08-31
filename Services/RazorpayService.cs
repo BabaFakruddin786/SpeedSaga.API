@@ -6,33 +6,36 @@ namespace SpeedSaga.API.Services;
 
 public interface IRazorpayService
 {
-    bool VerifySignature(string orderId, string paymentId, string signature);
+    Task<bool> VerifySignature(string orderId, string paymentId, string signature);
     Task<string> CreateOrderAsync(long amountPaise, Guid playerId);
-    string GetKeyId();
+    Task<string> GetKeyIdAsync(CancellationToken ct = default);
 }
 
 public class RazorpayService : IRazorpayService
 {
-    private readonly string _keyId;
-    private readonly string _secret;
-    private readonly IHttpClientFactory _httpClientFactory;
+    readonly IPaymentConfigService _paymentConfig;
+    readonly IHttpClientFactory _httpClientFactory;
 
-    public RazorpayService(IConfiguration configuration, IHttpClientFactory httpClientFactory)
+    public RazorpayService(IPaymentConfigService paymentConfig, IHttpClientFactory httpClientFactory)
     {
-        _keyId = configuration["Razorpay:KeyId"] ?? string.Empty;
-        _secret = configuration["Razorpay:KeySecret"] ?? string.Empty;
+        _paymentConfig = paymentConfig;
         _httpClientFactory = httpClientFactory;
     }
 
-    public string GetKeyId() => _keyId;
-
-    public bool VerifySignature(string orderId, string paymentId, string signature)
+    public async Task<string> GetKeyIdAsync(CancellationToken ct = default)
     {
-        if (string.IsNullOrWhiteSpace(_secret))
+        var secrets = await _paymentConfig.GetSecretsAsync(ct);
+        return secrets.KeyId;
+    }
+
+    public async Task<bool> VerifySignature(string orderId, string paymentId, string signature)
+    {
+        var secrets = await _paymentConfig.GetSecretsAsync();
+        if (string.IsNullOrWhiteSpace(secrets.KeySecret))
             return false;
 
         var payload = $"{orderId}|{paymentId}";
-        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(_secret));
+        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(secrets.KeySecret));
         var hash = hmac.ComputeHash(Encoding.UTF8.GetBytes(payload));
         var expected = BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant();
         return expected == signature.ToLowerInvariant();
@@ -40,8 +43,12 @@ public class RazorpayService : IRazorpayService
 
     public async Task<string> CreateOrderAsync(long amountPaise, Guid playerId)
     {
+        var secrets = await _paymentConfig.GetSecretsAsync();
+        if (!secrets.IsRazorpayEnabled || string.IsNullOrWhiteSpace(secrets.KeyId) || string.IsNullOrWhiteSpace(secrets.KeySecret))
+            throw new InvalidOperationException("Razorpay is not configured.");
+
         var client = _httpClientFactory.CreateClient("Razorpay");
-        var auth = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{_keyId}:{_secret}"));
+        var auth = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{secrets.KeyId}:{secrets.KeySecret}"));
         client.DefaultRequestHeaders.Authorization =
             new System.Net.Http.Headers.AuthenticationHeaderValue("Basic", auth);
 

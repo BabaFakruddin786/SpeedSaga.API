@@ -9,6 +9,7 @@ public interface INotificationService
     Task<object?> GetNotificationsAsync(Guid playerId, int page);
     Task MarkReadAsync(Guid playerId, Guid notifId);
     Task SendAsync(Guid playerId, string title, string body, string notifType);
+    Task RegisterDeviceTokenAsync(Guid playerId, string deviceToken, string platform);
 }
 
 public class NotificationService : INotificationService
@@ -65,6 +66,18 @@ public class NotificationService : INotificationService
         cmd.Parameters.AddWithValue("@Title", title);
         cmd.Parameters.AddWithValue("@Body", body);
         cmd.Parameters.AddWithValue("@NotifType", notifType);
+        await cmd.ExecuteNonQueryAsync();
+    }
+
+    public async Task RegisterDeviceTokenAsync(Guid playerId, string deviceToken, string platform)
+    {
+        if (string.IsNullOrWhiteSpace(deviceToken)) return;
+        await using var cn = _db.CreateConnection();
+        await cn.OpenAsync();
+        await using var cmd = new SqlCommand("USP_RegisterPlayerDeviceToken", cn) { CommandType = CommandType.StoredProcedure };
+        cmd.Parameters.AddWithValue("@PlayerId", playerId);
+        cmd.Parameters.AddWithValue("@DeviceToken", deviceToken.Trim());
+        cmd.Parameters.AddWithValue("@Platform", string.IsNullOrWhiteSpace(platform) ? "android" : platform.Trim());
         await cmd.ExecuteNonQueryAsync();
     }
 }
