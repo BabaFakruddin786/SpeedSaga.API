@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using SpeedSaga.API.Authorization;
 using SpeedSaga.API.Extensions;
+using SpeedSaga.API.Infrastructure;
 using SpeedSaga.API.Models;
 using SpeedSaga.API.Services;
 
@@ -43,29 +44,21 @@ public class AdminSupportController : ControllerBase
     readonly ISupportService _support;
     readonly ISupportConfigService _supportConfig;
     readonly ITickerConfigService _tickerConfig;
-    readonly IWebHostEnvironment _env;
     readonly AdminOptions _admin;
 
     public AdminSupportController(
         ISupportService support,
         ISupportConfigService supportConfig,
         ITickerConfigService tickerConfig,
-        IWebHostEnvironment env,
         IOptions<AdminOptions> admin)
     {
         _support = support;
         _supportConfig = supportConfig;
         _tickerConfig = tickerConfig;
-        _env = env;
         _admin = admin.Value;
     }
 
-    bool IsAdminAuthorized()
-    {
-        if (string.IsNullOrWhiteSpace(_admin.ApiKey)) return false;
-        if (!Request.Headers.TryGetValue("X-Admin-Key", out var key)) return false;
-        return string.Equals(key.ToString(), _admin.ApiKey, StringComparison.Ordinal);
-    }
+    bool IsAdminAuthorized() => AdminAuthorization.IsAuthorized(Request, _admin);
 
     [HttpGet("config")]
     public async Task<IActionResult> GetConfig()
@@ -102,15 +95,31 @@ public class AdminSupportController : ControllerBase
     [HttpGet("tickets")]
     public async Task<IActionResult> ListTickets([FromQuery] string? status)
     {
-        if (!_env.IsDevelopment()) return Forbid();
+        if (!IsAdminAuthorized()) return Unauthorized(new ApiResponse<object>(false, "Invalid admin key"));
         return Ok(await _support.ListTicketsAsync(status));
+    }
+
+    [HttpGet("tickets/{ticketId:guid}")]
+    public async Task<IActionResult> GetTicket(Guid ticketId)
+    {
+        if (!IsAdminAuthorized()) return Unauthorized(new ApiResponse<object>(false, "Invalid admin key"));
+        var ticket = await _support.GetTicketDetailAsync(ticketId);
+        return ticket == null ? NotFound(new ApiResponse<object>(false, "Ticket not found")) : Ok(ticket);
     }
 
     [HttpPost("tickets/{ticketId:guid}/reply")]
     public async Task<IActionResult> Reply(Guid ticketId, [FromBody] SupportMessageRequest req)
     {
-        if (!_env.IsDevelopment()) return Forbid();
+        if (!IsAdminAuthorized()) return Unauthorized(new ApiResponse<object>(false, "Invalid admin key"));
         var result = await _support.AdminReplyAsync(ticketId, req.Message);
+        return result.Success ? Ok(result) : BadRequest(result);
+    }
+
+    [HttpPost("tickets/{ticketId:guid}/close")]
+    public async Task<IActionResult> Close(Guid ticketId)
+    {
+        if (!IsAdminAuthorized()) return Unauthorized(new ApiResponse<object>(false, "Invalid admin key"));
+        var result = await _support.CloseTicketAsync(ticketId);
         return result.Success ? Ok(result) : BadRequest(result);
     }
 }

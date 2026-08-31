@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
+using SpeedSaga.API.Infrastructure;
 using SpeedSaga.API.Models;
 using SpeedSaga.API.Services;
 
@@ -18,25 +19,31 @@ public class AdminKycController : ControllerBase
         _admin = admin.Value;
     }
 
-    bool IsAuthorized()
-    {
-        if (string.IsNullOrWhiteSpace(_admin.ApiKey)) return false;
-        if (!Request.Headers.TryGetValue("X-Admin-Key", out var key)) return false;
-        return string.Equals(key.ToString(), _admin.ApiKey, StringComparison.Ordinal);
-    }
-
     [HttpGet("pending")]
     public async Task<IActionResult> ListPending([FromQuery] int page = 1)
     {
-        if (!IsAuthorized()) return Unauthorized(new ApiResponse<object>(false, "Invalid admin key"));
+        if (!AdminAuthorization.IsAuthorized(Request, _admin))
+            return Unauthorized(new ApiResponse<object>(false, "Invalid admin key"));
         return Ok(await _kycAdmin.ListPendingAsync(page));
     }
 
     [HttpPost("{playerId:guid}/review")]
     public async Task<IActionResult> Review(Guid playerId, [FromBody] KycReviewRequest req)
     {
-        if (!IsAuthorized()) return Unauthorized(new ApiResponse<object>(false, "Invalid admin key"));
+        if (!AdminAuthorization.IsAuthorized(Request, _admin))
+            return Unauthorized(new ApiResponse<object>(false, "Invalid admin key"));
         var result = await _kycAdmin.ReviewAsync(playerId, req);
         return result.Success ? Ok(result) : BadRequest(result);
+    }
+
+    [HttpGet("{playerId:guid}/documents/{docType}")]
+    public async Task<IActionResult> GetDocument(Guid playerId, string docType)
+    {
+        if (!AdminAuthorization.IsAuthorized(Request, _admin))
+            return Unauthorized(new ApiResponse<object>(false, "Invalid admin key"));
+        var doc = await _kycAdmin.GetDocumentAsync(playerId, docType);
+        return doc == null
+            ? NotFound(new ApiResponse<object>(false, "Document not found"))
+            : PhysicalFile(doc.Value.Path, doc.Value.ContentType);
     }
 }

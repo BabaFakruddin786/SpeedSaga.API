@@ -11,7 +11,9 @@ public interface ISupportService
     Task<ApiResponse<object>> EscalateAsync(Guid playerId, string message);
     Task<ApiResponse<object>> SendPlayerMessageAsync(Guid playerId, string body);
     Task<object[]> ListTicketsAsync(string? status);
+    Task<object?> GetTicketDetailAsync(Guid ticketId);
     Task<ApiResponse<object>> AdminReplyAsync(Guid ticketId, string body);
+    Task<ApiResponse<object>> CloseTicketAsync(Guid ticketId);
 }
 
 public class SupportService : ISupportService
@@ -104,6 +106,57 @@ public class SupportService : ISupportService
         return list.ToArray();
     }
 
+    public async Task<object?> GetTicketDetailAsync(Guid ticketId)
+    {
+        await using var cn = _db.CreateConnection();
+        await cn.OpenAsync();
+        await using var cmd = new SqlCommand(@"
+            SELECT T.TicketId, T.PlayerId, T.Status, T.Subject, T.CreatedAt, T.UpdatedAt,
+                   P.Username, P.ContactEmail, P.ContactPhone
+            FROM SupportTickets T
+            INNER JOIN Players P ON P.PlayerId = T.PlayerId
+            WHERE T.TicketId = @TicketId", cn);
+        cmd.Parameters.AddWithValue("@TicketId", ticketId);
+        await using var rdr = await cmd.ExecuteReaderAsync();
+        if (!await rdr.ReadAsync()) return null;
+
+        var detail = new
+        {
+            ticketId = rdr["TicketId"].ToString(),
+            playerId = rdr["PlayerId"].ToString(),
+            username = rdr["Username"]?.ToString(),
+            contactEmail = rdr["ContactEmail"]?.ToString(),
+            contactPhone = rdr["ContactPhone"]?.ToString(),
+            status = rdr["Status"].ToString(),
+            subject = rdr["Subject"]?.ToString(),
+            createdAt = (DateTime)rdr["CreatedAt"],
+            updatedAt = (DateTime)rdr["UpdatedAt"],
+            messages = Array.Empty<object>()
+        };
+        await rdr.CloseAsync();
+
+        var messages = await GetMessagesAsync(ticketId);
+        return new
+        {
+            detail.ticketId,
+            detail.playerId,
+            detail.username,
+            detail.contactEmail,
+            detail.contactPhone,
+            detail.status,
+            detail.subject,
+            detail.createdAt,
+            detail.updatedAt,
+            messages = messages.Select(m => new
+            {
+                messageId = m.MessageId.ToString(),
+                senderType = m.SenderType,
+                body = m.Body,
+                createdAt = m.CreatedAt
+            })
+        };
+    }
+
     public async Task<ApiResponse<object>> AdminReplyAsync(Guid ticketId, string body)
     {
         body = body?.Trim() ?? "";
@@ -114,6 +167,19 @@ public class SupportService : ISupportService
 
         await AddMessageAsync(ticketId, "Agent", body);
         return new ApiResponse<object>(true, "Reply sent");
+    }
+
+    public async Task<ApiResponse<object>> CloseTicketAsync(Guid ticketId)
+    {
+        if (!await TicketExistsAsync(ticketId))
+            return new ApiResponse<object>(false, "Ticket not found");
+
+        await using var cn = _db.CreateConnection();
+        await cn.OpenAsync();
+        await using var cmd = new SqlCommand("USP_CloseSupportTicket", cn) { CommandType = CommandType.StoredProcedure };
+        cmd.Parameters.AddWithValue("@TicketId", ticketId);
+        await cmd.ExecuteNonQueryAsync();
+        return new ApiResponse<object>(true, "Ticket closed");
     }
 
     async Task<TicketRow?> GetOpenTicketAsync(Guid playerId)

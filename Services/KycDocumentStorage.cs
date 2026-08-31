@@ -29,4 +29,26 @@ public class KycDocumentStorage
 
         return Path.Combine(playerId.ToString("N"), stored).Replace('\\', '/');
     }
+
+    public string? ResolveFullPath(string? relativePath)
+    {
+        if (string.IsNullOrWhiteSpace(relativePath)) return null;
+        var normalized = relativePath.Replace('/', Path.DirectorySeparatorChar);
+        var full = Path.GetFullPath(Path.Combine(_root, normalized));
+        if (!full.StartsWith(_root, StringComparison.OrdinalIgnoreCase)) return null;
+        return File.Exists(full) ? full : null;
+    }
+
+    public string? GetContentType(string path)
+    {
+        var ext = Path.GetExtension(path).ToLowerInvariant();
+        return ext switch
+        {
+            ".jpg" or ".jpeg" => "image/jpeg",
+            ".png" => "image/png",
+            ".webp" => "image/webp",
+            ".pdf" => "application/pdf",
+            _ => null
+        };
+    }
 }

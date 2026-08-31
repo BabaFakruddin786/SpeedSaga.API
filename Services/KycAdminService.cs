@@ -11,13 +11,19 @@ public interface IKycAdminService
 {
     Task<IReadOnlyList<object>> ListPendingAsync(int page, CancellationToken ct = default);
     Task<ApiResponse<object>> ReviewAsync(Guid playerId, KycReviewRequest req, CancellationToken ct = default);
+    Task<(string Path, string ContentType)?> GetDocumentAsync(Guid playerId, string docType, CancellationToken ct = default);
 }
 
 public class KycAdminService : IKycAdminService
 {
     readonly ISqlConnectionFactory _db;
+    readonly KycDocumentStorage _storage;
 
-    public KycAdminService(ISqlConnectionFactory db) => _db = db;
+    public KycAdminService(ISqlConnectionFactory db, KycDocumentStorage storage)
+    {
+        _db = db;
+        _storage = storage;
+    }
 
     public async Task<IReadOnlyList<object>> ListPendingAsync(int page, CancellationToken ct = default)
     {
@@ -71,6 +77,30 @@ public class KycAdminService : IKycAdminService
         var finalStatus = action == "Approve" ? "Approved" : "Rejected";
         await SetKycDocumentAsync(playerId, docType, finalStatus, action == "Reject" ? req.Reason?.Trim() : null, ct);
         return new ApiResponse<object>(true, $"{docType} {finalStatus.ToLowerInvariant()}");
+    }
+
+    public async Task<(string Path, string ContentType)?> GetDocumentAsync(Guid playerId, string docType, CancellationToken ct = default)
+    {
+        docType = docType?.Trim() ?? "";
+        var col = docType switch
+        {
+            "aadhaar" => "AadhaarDocPath",
+            "pan" => "PanDocPath",
+            "bank" => "BankDocPath",
+            _ => null
+        };
+        if (col == null) return null;
+
+        await using var cn = _db.CreateConnection();
+        await cn.OpenAsync(ct);
+        await using var cmd = new SqlCommand($"SELECT {col} FROM PlayerKYC WHERE PlayerId = @PlayerId", cn);
+        cmd.Parameters.AddWithValue("@PlayerId", playerId);
+        var result = await cmd.ExecuteScalarAsync(ct);
+        var relative = result == DBNull.Value || result == null ? null : result.ToString();
+        var full = _storage.ResolveFullPath(relative);
+        if (full == null) return null;
+        var contentType = _storage.GetContentType(full);
+        return contentType == null ? null : (full, contentType);
     }
 
     async Task<string?> GetDocStatusAsync(Guid playerId, string docType, CancellationToken ct)
