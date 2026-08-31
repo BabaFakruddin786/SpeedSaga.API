@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using System.Text;
 using FluentValidation;
 using FluentValidation.AspNetCore;
@@ -79,6 +80,8 @@ builder.Services
             ValidIssuer = jwtSettings.Issuer,
             ValidAudience = jwtSettings.Audience,
             IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSettings.Key)),
+            RoleClaimType = ClaimTypes.Role,
+            NameClaimType = ClaimTypes.Name,
             ClockSkew = TimeSpan.FromMinutes(1)
         };
 
