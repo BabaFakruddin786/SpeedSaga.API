@@ -19,11 +19,19 @@ public class AdminDashboardController : ControllerBase
         _admin = admin.Value;
     }
 
+    IActionResult? RequireSuperAdmin()
+    {
+        if (!AdminAuthorization.HasSuperAdminAccess(HttpContext, _admin))
+            return AdminAuthorization.HasAdminAccess(HttpContext, _admin)
+                ? Forbid()
+                : Unauthorized(new ApiResponse<object>(false, "Sign in required"));
+        return null;
+    }
+
     [HttpGet("stats")]
     public async Task<IActionResult> Stats()
     {
-        if (!AdminAuthorization.IsAuthorized(Request, _admin))
-            return Unauthorized(new ApiResponse<object>(false, "Invalid admin key"));
+        if (RequireSuperAdmin() is { } denied) return denied;
         var stats = await _dashboard.GetStatsAsync();
         return stats == null ? NotFound() : Ok(stats);
     }
@@ -31,16 +39,14 @@ public class AdminDashboardController : ControllerBase
     [HttpGet("finance/daily")]
     public async Task<IActionResult> DailyFlow([FromQuery] int days = 30)
     {
-        if (!AdminAuthorization.IsAuthorized(Request, _admin))
-            return Unauthorized(new ApiResponse<object>(false, "Invalid admin key"));
+        if (RequireSuperAdmin() is { } denied) return denied;
         return Ok(await _dashboard.GetDailyFlowAsync(days));
     }
 
     [HttpGet("finance/by-type")]
     public async Task<IActionResult> ByType([FromQuery] DateTime? from, [FromQuery] DateTime? to)
     {
-        if (!AdminAuthorization.IsAuthorized(Request, _admin))
-            return Unauthorized(new ApiResponse<object>(false, "Invalid admin key"));
+        if (RequireSuperAdmin() is { } denied) return denied;
         return Ok(await _dashboard.GetFlowByTypeAsync(from, to));
     }
 }

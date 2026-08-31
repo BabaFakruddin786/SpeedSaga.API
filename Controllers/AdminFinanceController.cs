@@ -19,6 +19,15 @@ public class AdminFinanceController : ControllerBase
         _admin = admin.Value;
     }
 
+    IActionResult? RequireSuperAdmin()
+    {
+        if (!AdminAuthorization.HasSuperAdminAccess(HttpContext, _admin))
+            return AdminAuthorization.HasAdminAccess(HttpContext, _admin)
+                ? Forbid()
+                : Unauthorized(new ApiResponse<object>(false, "Sign in required"));
+        return null;
+    }
+
     [HttpGet("transactions")]
     public async Task<IActionResult> Transactions(
         [FromQuery] string? type,
@@ -27,24 +36,21 @@ public class AdminFinanceController : ControllerBase
         [FromQuery] DateTime? to,
         [FromQuery] int page = 1)
     {
-        if (!AdminAuthorization.IsAuthorized(Request, _admin))
-            return Unauthorized(new ApiResponse<object>(false, "Invalid admin key"));
+        if (RequireSuperAdmin() is { } denied) return denied;
         return Ok(await _finance.ListTransactionsAsync(type, playerId, from, to, page));
     }
 
     [HttpGet("top-depositors")]
     public async Task<IActionResult> TopDepositors([FromQuery] int days = 30, [FromQuery] int limit = 10)
     {
-        if (!AdminAuthorization.IsAuthorized(Request, _admin))
-            return Unauthorized(new ApiResponse<object>(false, "Invalid admin key"));
+        if (RequireSuperAdmin() is { } denied) return denied;
         return Ok(await _finance.TopDepositorsAsync(days, limit));
     }
 
     [HttpGet("players/{playerId:guid}/daily")]
     public async Task<IActionResult> PlayerDaily(Guid playerId, [FromQuery] int days = 30)
     {
-        if (!AdminAuthorization.IsAuthorized(Request, _admin))
-            return Unauthorized(new ApiResponse<object>(false, "Invalid admin key"));
+        if (RequireSuperAdmin() is { } denied) return denied;
         return Ok(await _finance.PlayerFinanceDailyAsync(playerId, days));
     }
 }

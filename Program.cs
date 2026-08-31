@@ -48,6 +48,8 @@ builder.Services.AddScoped<IKycAdminService, KycAdminService>();
 builder.Services.AddScoped<IAdminDashboardService, AdminDashboardService>();
 builder.Services.AddScoped<IAdminFinanceService, AdminFinanceService>();
 builder.Services.AddScoped<IAdminPlayerService, AdminPlayerService>();
+builder.Services.AddScoped<IAdminAuthService, AdminAuthService>();
+builder.Services.AddHostedService<AdminUserSeedService>();
 builder.Services.Configure<FormOptions>(o => o.MultipartBodyLengthLimit = 6_000_000);
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IWalletService, WalletService>();

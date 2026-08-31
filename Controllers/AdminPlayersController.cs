@@ -19,19 +19,24 @@ public class AdminPlayersController : ControllerBase
         _admin = admin.Value;
     }
 
+    IActionResult? RequireAdmin()
+    {
+        if (!AdminAuthorization.HasAdminAccess(HttpContext, _admin))
+            return Unauthorized(new ApiResponse<object>(false, "Sign in required"));
+        return null;
+    }
+
     [HttpGet("search")]
     public async Task<IActionResult> Search([FromQuery] string? q, [FromQuery] int page = 1)
     {
-        if (!AdminAuthorization.IsAuthorized(Request, _admin))
-            return Unauthorized(new ApiResponse<object>(false, "Invalid admin key"));
+        if (RequireAdmin() is { } denied) return denied;
         return Ok(await _players.SearchAsync(q, page));
     }
 
     [HttpGet("{playerId:guid}")]
     public async Task<IActionResult> Detail(Guid playerId)
     {
-        if (!AdminAuthorization.IsAuthorized(Request, _admin))
-            return Unauthorized(new ApiResponse<object>(false, "Invalid admin key"));
+        if (RequireAdmin() is { } denied) return denied;
         var detail = await _players.GetDetailAsync(playerId);
         return detail == null ? NotFound(new ApiResponse<object>(false, "Player not found")) : Ok(detail);
     }

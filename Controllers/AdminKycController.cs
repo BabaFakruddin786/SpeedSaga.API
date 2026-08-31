@@ -19,19 +19,24 @@ public class AdminKycController : ControllerBase
         _admin = admin.Value;
     }
 
+    IActionResult? RequireAdmin()
+    {
+        if (!AdminAuthorization.HasAdminAccess(HttpContext, _admin))
+            return Unauthorized(new ApiResponse<object>(false, "Sign in required"));
+        return null;
+    }
+
     [HttpGet("pending")]
     public async Task<IActionResult> ListPending([FromQuery] int page = 1)
     {
-        if (!AdminAuthorization.IsAuthorized(Request, _admin))
-            return Unauthorized(new ApiResponse<object>(false, "Invalid admin key"));
+        if (RequireAdmin() is { } denied) return denied;
         return Ok(await _kycAdmin.ListPendingAsync(page));
     }
 
     [HttpPost("{playerId:guid}/review")]
     public async Task<IActionResult> Review(Guid playerId, [FromBody] KycReviewRequest req)
     {
-        if (!AdminAuthorization.IsAuthorized(Request, _admin))
-            return Unauthorized(new ApiResponse<object>(false, "Invalid admin key"));
+        if (RequireAdmin() is { } denied) return denied;
         var result = await _kycAdmin.ReviewAsync(playerId, req);
         return result.Success ? Ok(result) : BadRequest(result);
     }
@@ -39,8 +44,7 @@ public class AdminKycController : ControllerBase
     [HttpGet("{playerId:guid}/documents/{docType}")]
     public async Task<IActionResult> GetDocument(Guid playerId, string docType)
     {
-        if (!AdminAuthorization.IsAuthorized(Request, _admin))
-            return Unauthorized(new ApiResponse<object>(false, "Invalid admin key"));
+        if (RequireAdmin() is { } denied) return denied;
         var doc = await _kycAdmin.GetDocumentAsync(playerId, docType);
         return doc == null
             ? NotFound(new ApiResponse<object>(false, "Document not found"))
