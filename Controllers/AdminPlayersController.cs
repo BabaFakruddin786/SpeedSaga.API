@@ -40,4 +40,14 @@ public class AdminPlayersController : ControllerBase
         var detail = await _players.GetDetailAsync(playerId);
         return detail == null ? NotFound(new ApiResponse<object>(false, "Player not found")) : Ok(detail);
     }
+
+    [HttpPost("{playerId:guid}/ban")]
+    public async Task<IActionResult> SetBan(Guid playerId, [FromBody] SetPlayerBanRequest req, CancellationToken ct = default)
+    {
+        if (RequireAdmin() is { } denied) return denied;
+        var result = await _players.SetBanAsync(playerId, req.IsBanned, req.Reason, ct);
+        return result.Success ? Ok(result) : BadRequest(result);
+    }
 }
+
+public record SetPlayerBanRequest(bool IsBanned, string? Reason);

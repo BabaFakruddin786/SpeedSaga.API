@@ -76,7 +76,7 @@ public class PaymentConfigService : IPaymentConfigService
     public async Task<PaymentConfigAdminDto?> GetAdminConfigAsync(CancellationToken ct = default)
     {
         var row = await LoadRowAsync(ct);
-        return row == null ? BuildFallbackAdminDto() : MapAdmin(row);
+        return row == null ? BuildFallbackAdminDto() : MapAdmin(row, _configuration);
     }
 
     public async Task<PaymentConfigSecrets> GetSecretsAsync(CancellationToken ct = default)
@@ -85,7 +85,7 @@ public class PaymentConfigService : IPaymentConfigService
             return cached;
 
         var row = await LoadRowAsync(ct);
-        var secrets = row == null ? BuildFallbackSecrets() : MapSecrets(row);
+        var secrets = row == null ? BuildFallbackSecrets() : MapSecrets(row, _configuration);
         _cache.Set(SecretsCacheKey, secrets, TimeSpan.FromMinutes(2));
         return secrets;
     }
@@ -158,14 +158,24 @@ public class PaymentConfigService : IPaymentConfigService
         10000,
         50000000);
 
-    static PaymentConfigAdminDto MapAdmin(Dictionary<string, object> row)
+    static PaymentConfigAdminDto MapAdmin(Dictionary<string, object> row, IConfiguration configuration)
     {
+        var keyId = row["RazorpayKeyId"]?.ToString() ?? "";
+        if (string.IsNullOrWhiteSpace(keyId))
+            keyId = configuration["Razorpay:KeyId"] ?? "";
+
         var keySecret = row["RazorpayKeySecret"]?.ToString() ?? "";
+        if (string.IsNullOrWhiteSpace(keySecret))
+            keySecret = configuration["Razorpay:KeySecret"] ?? "";
+
         var webhookSecret = row["RazorpayWebhookSecret"]?.ToString() ?? "";
+        if (string.IsNullOrWhiteSpace(webhookSecret))
+            webhookSecret = configuration["Razorpay:WebhookSecret"] ?? "";
+
         var fcm = row["FcmServerKey"]?.ToString();
         return new PaymentConfigAdminDto(
             (bool)row["IsRazorpayEnabled"],
-            row["RazorpayKeyId"]?.ToString() ?? "",
+            keyId,
             !string.IsNullOrEmpty(keySecret),
             Mask(keySecret),
             !string.IsNullOrEmpty(webhookSecret),
@@ -183,16 +193,31 @@ public class PaymentConfigService : IPaymentConfigService
             row["UpdatedAt"] is DateTime dt ? dt : DateTime.UtcNow);
     }
 
-    static PaymentConfigSecrets MapSecrets(Dictionary<string, object> row) => new(
-        (bool)row["IsRazorpayEnabled"],
-        row["RazorpayKeyId"]?.ToString() ?? "",
-        row["RazorpayKeySecret"]?.ToString() ?? "",
-        row["RazorpayWebhookSecret"]?.ToString() ?? "",
-        (bool)row["IsPushEnabled"],
-        row["FcmServerKey"]?.ToString(),
-        (long)row["MinDepositPaise"],
-        (long)row["MinWithdrawPaise"],
-        (long)row["MaxWithdrawPaise"]);
+    static PaymentConfigSecrets MapSecrets(Dictionary<string, object> row, IConfiguration configuration)
+    {
+        var keyId = row["RazorpayKeyId"]?.ToString() ?? "";
+        if (string.IsNullOrWhiteSpace(keyId))
+            keyId = configuration["Razorpay:KeyId"] ?? "";
+
+        var keySecret = row["RazorpayKeySecret"]?.ToString() ?? "";
+        if (string.IsNullOrWhiteSpace(keySecret))
+            keySecret = configuration["Razorpay:KeySecret"] ?? "";
+
+        var webhookSecret = row["RazorpayWebhookSecret"]?.ToString() ?? "";
+        if (string.IsNullOrWhiteSpace(webhookSecret))
+            webhookSecret = configuration["Razorpay:WebhookSecret"] ?? "";
+
+        return new PaymentConfigSecrets(
+            (bool)row["IsRazorpayEnabled"],
+            keyId,
+            keySecret,
+            webhookSecret,
+            (bool)row["IsPushEnabled"],
+            row["FcmServerKey"]?.ToString(),
+            (long)row["MinDepositPaise"],
+            (long)row["MinWithdrawPaise"],
+            (long)row["MaxWithdrawPaise"]);
+    }
 
     static string Mask(string? value)
     {

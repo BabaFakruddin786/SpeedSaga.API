@@ -16,15 +16,17 @@ public class PlayerController : ControllerBase
     private readonly IOutgoingMessageService _messages;
     private readonly IOtpService _otp;
     private readonly IWebHostEnvironment _env;
+    private readonly ILogViewerService _logs;
 
     public PlayerController(IPlayerService player, IKycVerificationService kycVerify, IOutgoingMessageService messages,
-        IOtpService otp, IWebHostEnvironment env)
+        IOtpService otp, IWebHostEnvironment env, ILogViewerService logs)
     {
         _player = player;
         _kycVerify = kycVerify;
         _messages = messages;
         _otp = otp;
         _env = env;
+        _logs = logs;
     }
 
     [HttpGet("dashboard")]
@@ -121,4 +123,22 @@ public class PlayerController : ControllerBase
     [HttpGet("messages")]
     public async Task<IActionResult> GetMessages([FromQuery] int page = 1)
         => Ok(await _messages.GetPlayerMessagesAsync(User.GetPlayerId(), page));
+
+    [HttpPost("logs/upload")]
+    public async Task<IActionResult> UploadLogs([FromBody] ClientLogUploadRequest req, CancellationToken ct)
+    {
+        if (req.Lines == null || req.Lines.Count == 0)
+            return BadRequest(new ApiResponse<object>(false, "No log lines provided."));
+        try
+        {
+            var count = await _logs.AppendAppUploadAsync(User.GetPlayerId(), req.Lines, ct);
+            return Ok(new ApiResponse<object>(true, $"Stored {count} log line(s).", new { count }));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new ApiResponse<object>(false, ex.Message));
+        }
+    }
 }
+
+public record ClientLogUploadRequest(IReadOnlyList<string> Lines);

@@ -1,6 +1,7 @@
 using System.Data;
 using Microsoft.Data.SqlClient;
 using SpeedSaga.API.Infrastructure;
+using SpeedSaga.API.Models;
 
 namespace SpeedSaga.API.Services;
 
@@ -8,6 +9,7 @@ public interface IAdminPlayerService
 {
     Task<IReadOnlyList<object>> SearchAsync(string? query, int page, CancellationToken ct = default);
     Task<object?> GetDetailAsync(Guid playerId, CancellationToken ct = default);
+    Task<ApiResponse<object>> SetBanAsync(Guid playerId, bool isBanned, string? reason, CancellationToken ct = default);
 }
 
 public class AdminPlayerService : IAdminPlayerService
@@ -83,5 +85,26 @@ public class AdminPlayerService : IAdminPlayerService
             bankStatus = rdr["BankStatus"]?.ToString(),
             isFullyVerified = rdr["IsFullyVerified"] != DBNull.Value && (bool)rdr["IsFullyVerified"]
         };
+    }
+
+    public async Task<ApiResponse<object>> SetBanAsync(Guid playerId, bool isBanned, string? reason, CancellationToken ct = default)
+    {
+        await using var cn = _db.CreateConnection();
+        await cn.OpenAsync(ct);
+        await using var cmd = new SqlCommand("USP_AdminSetPlayerBan", cn) { CommandType = CommandType.StoredProcedure };
+        cmd.Parameters.AddWithValue("@PlayerId", playerId);
+        cmd.Parameters.AddWithValue("@IsBanned", isBanned);
+        cmd.Parameters.AddWithValue("@BannedReason", (object?)reason?.Trim() ?? DBNull.Value);
+        var resultParam = cmd.Parameters.Add("@Result", SqlDbType.Int);
+        resultParam.Direction = ParameterDirection.Output;
+        var messageParam = cmd.Parameters.Add("@Message", SqlDbType.NVarChar, 200);
+        messageParam.Direction = ParameterDirection.Output;
+        await cmd.ExecuteNonQueryAsync(ct);
+
+        var code = (int)resultParam.Value;
+        var message = messageParam.Value?.ToString() ?? "";
+        return code == 0
+            ? new ApiResponse<object>(true, message)
+            : new ApiResponse<object>(false, message);
     }
 }

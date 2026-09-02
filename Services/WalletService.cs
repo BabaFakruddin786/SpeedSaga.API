@@ -69,7 +69,7 @@ public class WalletService : IWalletService
 
     public async Task<ApiResponse<object>> ProcessDepositAsync(Guid playerId, DepositRequest req)
     {
-        if (!_razorpay.VerifySignature(req.RazorpayOrderId, req.RazorpayPaymentId, req.RazorpaySignature))
+        if (!await _razorpay.VerifySignature(req.RazorpayOrderId, req.RazorpayPaymentId, req.RazorpaySignature))
             return new ApiResponse<object>(false, "Payment signature verification failed.");
 
         await using var cn = _db.CreateConnection();

@@ -1,4 +1,4 @@
-namespace SpeedSaga.API.Middleware;
+using SpeedSaga.API.Infrastructure;
 
 public class ExceptionHandlingMiddleware
 {
@@ -22,6 +22,8 @@ public class ExceptionHandlingMiddleware
         catch (Exception ex)
         {
             _logger.LogError(ex, "Unhandled exception");
+            AppFileLogger.Exception(AppFileLogger.Category.Exception, "UNHANDLED", ex,
+                $"path={context.Request.Method} {context.Request.Path}");
             context.Response.StatusCode = StatusCodes.Status500InternalServerError;
             var message = _env.IsDevelopment()
                 ? ex.Message

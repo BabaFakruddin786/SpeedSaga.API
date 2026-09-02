@@ -34,6 +34,7 @@ builder.Services.AddHttpClient("Fcm");
 
 builder.Services.Configure<MessagingOptions>(configuration.GetSection(MessagingOptions.SectionName));
 builder.Services.Configure<AdminOptions>(configuration.GetSection(AdminOptions.SectionName));
+builder.Services.Configure<LogViewerOptions>(configuration.GetSection(LogViewerOptions.SectionName));
 builder.Services.AddSingleton<GameConnectionTracker>();
 builder.Services.AddMemoryCache();
 builder.Services.AddSingleton<IGamePlayConfigService, GamePlayConfigService>();
@@ -50,6 +51,7 @@ builder.Services.AddScoped<IKycAdminService, KycAdminService>();
 builder.Services.AddScoped<IAdminDashboardService, AdminDashboardService>();
 builder.Services.AddScoped<IAdminFinanceService, AdminFinanceService>();
 builder.Services.AddScoped<IAdminPlayerService, AdminPlayerService>();
+builder.Services.AddScoped<IAdminLevelService, AdminLevelService>();
 builder.Services.AddScoped<IAdminAuthService, AdminAuthService>();
 builder.Services.AddScoped<IPaymentConfigService, PaymentConfigService>();
 builder.Services.AddScoped<IAdminThemeService, AdminThemeService>();
@@ -70,6 +72,7 @@ builder.Services.AddScoped<ISupportService, SupportService>();
 builder.Services.AddScoped<ISupportConfigService, SupportConfigService>();
 builder.Services.AddScoped<ITickerConfigService, TickerConfigService>();
 builder.Services.AddScoped<IThemeService, ThemeService>();
+builder.Services.AddSingleton<ILogViewerService, LogViewerService>();
 builder.Services.AddHostedService<PuzzleWarmupService>();
 
 builder.Services
@@ -132,7 +135,15 @@ if (!string.IsNullOrWhiteSpace(connectionString))
 
 var app = builder.Build();
 
+var logViewerOptions = app.Configuration.GetSection(LogViewerOptions.SectionName).Get<LogViewerOptions>();
+var apiLogDir = logViewerOptions?.ApiLogDirectory;
+if (!string.IsNullOrWhiteSpace(apiLogDir) && !Path.IsPathRooted(apiLogDir))
+    apiLogDir = Path.Combine(app.Environment.ContentRootPath, apiLogDir);
+AppFileLogger.Initialize(apiLogDir);
+AppFileLogger.Info(AppFileLogger.Category.App, "API_START", $"env={app.Environment.EnvironmentName}");
+
 app.UseMiddleware<ExceptionHandlingMiddleware>();
+app.UseMiddleware<RequestLoggingMiddleware>();
 app.UseCors();
 
 if (app.Environment.IsDevelopment())
