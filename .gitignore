@@ -6,3 +6,5 @@ appsettings.*.local.json
 .env
 KycDocuments/
 Logs/
+publish/
+*.tar.gz

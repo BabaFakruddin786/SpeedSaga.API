@@ -10,6 +10,7 @@ public interface ISupportService
     Task<object?> GetConversationAsync(Guid playerId);
     Task<ApiResponse<object>> EscalateAsync(Guid playerId, string message);
     Task<ApiResponse<object>> SendPlayerMessageAsync(Guid playerId, string body);
+    Task<ApiResponse<object>> ClosePlayerConversationAsync(Guid playerId);
     Task<object[]> ListTicketsAsync(string? status);
     Task<object?> GetTicketDetailAsync(Guid ticketId);
     Task<ApiResponse<object>> AdminReplyAsync(Guid ticketId, string body);
@@ -77,6 +78,20 @@ public class SupportService : ISupportService
 
         await AddMessageAsync(ticket.TicketId, "Player", body);
         return new ApiResponse<object>(true, "Message sent");
+    }
+
+    public async Task<ApiResponse<object>> ClosePlayerConversationAsync(Guid playerId)
+    {
+        var ticket = await GetOpenTicketAsync(playerId);
+        if (ticket == null)
+            return new ApiResponse<object>(false, "No active support conversation");
+
+        await AddMessageAsync(ticket.TicketId, "Bot",
+            "You ended this support conversation. Tap Chat with agent anytime to reach us again.");
+        var closed = await CloseTicketAsync(ticket.TicketId);
+        return closed.Success
+            ? new ApiResponse<object>(true, "Conversation ended")
+            : closed;
     }
 
     public async Task<object[]> ListTicketsAsync(string? status)

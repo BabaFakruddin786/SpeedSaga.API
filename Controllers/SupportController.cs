@@ -35,6 +35,13 @@ public class SupportController : ControllerBase
         var result = await _support.SendPlayerMessageAsync(User.GetPlayerId(), req.Message);
         return result.Success ? Ok(result) : BadRequest(result);
     }
+
+    [HttpPost("close")]
+    public async Task<IActionResult> CloseConversation()
+    {
+        var result = await _support.ClosePlayerConversationAsync(User.GetPlayerId());
+        return result.Success ? Ok(result) : BadRequest(result);
+    }
 }
 
 [ApiController]

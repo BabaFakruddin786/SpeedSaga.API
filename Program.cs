@@ -52,6 +52,7 @@ builder.Services.AddScoped<IAdminDashboardService, AdminDashboardService>();
 builder.Services.AddScoped<IAdminFinanceService, AdminFinanceService>();
 builder.Services.AddScoped<IAdminPlayerService, AdminPlayerService>();
 builder.Services.AddScoped<IAdminLevelService, AdminLevelService>();
+builder.Services.AddScoped<IAdminTestDataService, AdminTestDataService>();
 builder.Services.AddScoped<IAdminAuthService, AdminAuthService>();
 builder.Services.AddScoped<IPaymentConfigService, PaymentConfigService>();
 builder.Services.AddScoped<IAdminThemeService, AdminThemeService>();

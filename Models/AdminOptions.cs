@@ -4,6 +4,8 @@ public class AdminOptions
 {
     public const string SectionName = "Admin";
     public string ApiKey { get; set; } = "";
+    /// <summary>When true, Super Admin can delete test players/data from the admin panel. Disable after go-live.</summary>
+    public bool AllowTestDataPurge { get; set; }
     public AdminSeedUser[] SeedUsers { get; set; } = Array.Empty<AdminSeedUser>();
 }
 

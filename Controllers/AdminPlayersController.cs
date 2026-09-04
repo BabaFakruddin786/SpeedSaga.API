@@ -48,6 +48,18 @@ public class AdminPlayersController : ControllerBase
         var result = await _players.SetBanAsync(playerId, req.IsBanned, req.Reason, ct);
         return result.Success ? Ok(result) : BadRequest(result);
     }
+
+    [HttpPost("{playerId:guid}/purge-data")]
+    public async Task<IActionResult> PurgePlayerData(Guid playerId, [FromServices] IAdminTestDataService testData, CancellationToken ct = default)
+    {
+        if (!AdminAuthorization.HasSuperAdminAccess(HttpContext, _admin))
+            return AdminAuthorization.HasAdminAccess(HttpContext, _admin)
+                ? StatusCode(403, new ApiResponse<object>(false, "Super Admin access required."))
+                : Unauthorized(new ApiResponse<object>(false, "Sign in required"));
+
+        var result = await testData.DeletePlayerAsync(playerId, ct);
+        return result.Success ? Ok(result) : BadRequest(result);
+    }
 }
 
 public record SetPlayerBanRequest(bool IsBanned, string? Reason);

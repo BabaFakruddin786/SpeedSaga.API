@@ -20,11 +20,27 @@ Custom server:
 .\RunAllMigrations.ps1 -Server "localhost\SQLEXPRESS01" -Database SpeedSagaDB
 ```
 
+## Production install (SSMS — one click)
+
+1. Connect SSMS to your server (e.g. `187.127.134.76,1433`).
+2. Enable **Query → SQLCMD Mode**.
+3. Open `INSTALL_SpeedSaga_Production.sql` from this folder (all `Updates_*.sql` files must stay in the same folder).
+4. Execute (F5). Fresh database only.
+
+Default admin accounts are seeded at the end (`Production_SeedAdminUsers.sql`):
+
+| Email | Password | Role |
+|-------|----------|------|
+| `admin@speedsaga.com` | `Admin@123456` | SuperAdmin |
+| `support@speedsaga.com` | `Support@123456` | Support |
+
+Change these passwords after first login.
+
 ## Manual apply (SSMS)
 
 1. Create database `SpeedSagaDB` if it does not exist.
 2. Run `SpeedSagaDB.sql`.
-3. Run every `Updates_*.sql` file **in numeric order** (002 → 032).
+3. Run every `Updates_*.sql` file **in numeric order** (002 → 039).
 
 ## Migration index
 
